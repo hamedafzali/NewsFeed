@@ -150,9 +150,12 @@ def create_app():
             "country_code": body["country_code"],
             "news_language": body["news_language"],
             "openai_api_key": body.get("openai_api_key"),
+            "ollama_base_url": body.get("ollama_base_url"),
+            "model": body.get("model", "gpt-4o-mini"),
             "newsapi_key": body.get("newsapi_key"),
             "max_posts_per_run": max_results,
         }
+        finbert_url = body.get("finbert_url")
 
         from processor import NewsProcessor
         try:
@@ -178,7 +181,19 @@ def create_app():
                     "relevance_score": round(score, 2),
                     "summary_en": summaries["summary_en"] if summaries else None,
                     "summary_fa": summaries["summary_fa"] if summaries else None,
+                    "sentiment": None,
+                    "sentiment_score": None,
                 })
+
+            # Batch sentiment via FinBERT — single call for all articles
+            if finbert_url and results:
+                titles = [a["title"] for a in results]
+                sentiment_map = processor.get_sentiment(titles, finbert_url)
+                for article in results:
+                    key = article["title"][:120]
+                    if key in sentiment_map:
+                        article["sentiment"] = sentiment_map[key]["label"]
+                        article["sentiment_score"] = sentiment_map[key]["score"]
 
             return jsonify({
                 "city": body["city_name"],

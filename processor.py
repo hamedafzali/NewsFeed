@@ -339,6 +339,22 @@ class NewsProcessor:
             self.logger.error(f"Connection test failed: {e}")
             return False
 
+    def get_sentiment(self, titles: List[str], finbert_url: str) -> Dict[str, Any]:
+        """Call the FinBERT sentiment service with a batch of titles.
+        Returns a dict keyed by title with {label, score}."""
+        try:
+            response = requests.post(
+                f"{finbert_url.rstrip('/')}/sentiment",
+                json={"texts": titles},
+                timeout=15,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return {d["text"][:120]: d for d in data.get("details", [])}
+        except Exception as e:
+            self.logger.warning(f"FinBERT call failed: {e}")
+        return {}
+
     def get_stats(self) -> Dict[str, Any]:
         try:
             with sqlite3.connect(self.db_path) as conn:
