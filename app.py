@@ -191,7 +191,7 @@ def create_app():
             "news_language": body["news_language"],
             "openai_api_key": body.get("openai_api_key"),
             "ollama_base_url": body.get("ollama_base_url"),
-            "model": body.get("model", "gpt-4o-mini"),
+            "model": body.get("model"),  # None → processor picks model based on backend
             "newsapi_key": body.get("newsapi_key"),
             "libretranslate_url": body.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL"),
             "sources": _build_sources(body),
