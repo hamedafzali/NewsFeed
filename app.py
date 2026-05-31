@@ -209,21 +209,22 @@ def create_app():
             for article in raw_articles:
                 if len(results) >= max_results:
                     break
-                content = processor._extract_content(article["url"])
+
+                # Content quality chain: full article > RSS description > title
+                content, quality = processor._extract_content_with_quality(article)
+
+                # Relevance check
                 if article.get("_bypass_relevance"):
                     score = 1.0
                 else:
-                    text_for_relevance = content if content and len(content) >= 200 else article["title"]
-                    score = processor._calculate_relevance(article["title"], text_for_relevance)
+                    score = processor._calculate_relevance(article["title"], content)
                     if score < 0.3:
                         continue
-                libretranslate_url = config.get("libretranslate_url")
-                if content:
-                    summaries = processor._summarize_and_translate(content)
-                else:
-                    # No content — translate the title at minimum
-                    title_fa = processor._translate_to_persian(article["title"], libretranslate_url)
-                    summaries = {"summary_en": article["title"], "summary_fa": title_fa}
+
+                # Summarise + translate in one LLM call (quality-aware prompt)
+                summaries = processor._summarize_and_translate(
+                    content, article["title"], article.get("source", ""), quality
+                )
 
                 results.append({
                     "title": article["title"],
@@ -231,6 +232,7 @@ def create_app():
                     "source": article.get("source"),
                     "published_at": article.get("published_at"),
                     "relevance_score": round(score, 2),
+                    "content_quality": quality,
                     "summary_en": summaries["summary_en"] if summaries else None,
                     "summary_fa": summaries["summary_fa"] if summaries else None,
                     "sentiment": None,

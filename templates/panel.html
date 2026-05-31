@@ -631,12 +631,19 @@ async function runPreview() {
     if (res.error) { document.getElementById('preview-results').innerHTML = `<div class="alert alert-danger">${res.error}</div>`; return; }
 
     const meta = `<div class="text-muted small mb-3">Fetched <strong>${res.fetched}</strong> articles, showing <strong>${res.returned}</strong> relevant results for <strong>${res.city}</strong></div>`;
+    const qualityBadge = q => ({
+      full_article:    '<span class="badge bg-success-subtle text-success me-1">📰 full article</span>',
+      rss_description: '<span class="badge bg-info-subtle text-info me-1">📋 rss snippet</span>',
+      title_only:      '<span class="badge bg-warning-subtle text-warning me-1">🔖 title only</span>',
+    }[q] || '');
+
     const cards = res.articles.map(a => `
       <div class="article-card">
         <div class="d-flex justify-content-between align-items-start mb-1">
           <a href="${a.url}" target="_blank" class="fw-semibold text-decoration-none">${a.title}</a>
-          <div class="d-flex gap-1 ms-2 flex-shrink-0">
-            <span class="badge bg-primary bg-opacity-25 text-primary badge-relevance">${(a.relevance_score*100).toFixed(0)}% relevant</span>
+          <div class="d-flex gap-1 ms-2 flex-shrink-0 flex-wrap justify-content-end">
+            ${qualityBadge(a.content_quality)}
+            <span class="badge bg-primary bg-opacity-25 text-primary badge-relevance">${(a.relevance_score*100).toFixed(0)}%</span>
             ${sentimentBadge(a.sentiment)}
           </div>
         </div>

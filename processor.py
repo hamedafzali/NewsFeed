@@ -2,31 +2,38 @@
 News Processor - Core News Processing Logic
 """
 import asyncio
+import html as html_lib
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import feedparser
 import requests
 import telegram
+from bs4 import BeautifulSoup
 from newspaper import Article
 from openai import OpenAI
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-    wait_fixed,
-)
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 DATA_DIR = os.getenv("DATA_DIR", "/app/data")
 RELEVANCE_THRESHOLD = 0.3
-TELEGRAM_POST_DELAY = 1.0  # seconds between posts to avoid flood limits
+TELEGRAM_POST_DELAY = 1.0
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+# Content quality levels (best → worst)
+QUALITY_FULL = "full_article"      # scraped body ≥300 chars
+QUALITY_RSS  = "rss_description"   # RSS description/summary field
+QUALITY_TITLE = "title_only"       # nothing but the headline
 
 
 @dataclass
@@ -40,12 +47,18 @@ class NewsResult:
 
 
 def _run_async(coro):
-    """Run an async coroutine from sync code using a fresh event loop."""
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+def _clean_html(raw: str) -> str:
+    """Strip HTML tags, decode entities, normalise whitespace."""
+    text = BeautifulSoup(raw, "html.parser").get_text(separator=" ")
+    text = html_lib.unescape(text)
+    return " ".join(text.split()).strip()
 
 
 class NewsProcessor:
@@ -56,11 +69,11 @@ class NewsProcessor:
         self.logger = logging.getLogger(__name__)
         self.telegram_bot = telegram.Bot(token=bot_config["bot_token"])
 
+        # LLM client — OpenAI key takes priority; fall back to Ollama env vars
         self.openai_client: Optional[OpenAI] = None
         ollama_base_url = bot_config.get("ollama_base_url") or os.getenv("OLLAMA_BASE_URL")
         self.model = (
-            bot_config.get("model")
-            or os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+            bot_config.get("model") or os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
             if ollama_base_url
             else bot_config.get("model", "gpt-4o-mini")
         )
@@ -72,6 +85,8 @@ class NewsProcessor:
         os.makedirs(DATA_DIR, exist_ok=True)
         self.db_path = os.path.join(DATA_DIR, f"bot_{bot_config.get('bot_id', 'default')}.db")
         self._init_bot_database()
+
+    # ── Database ──────────────────────────────────────────────────────────────
 
     def _init_bot_database(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -85,28 +100,38 @@ class NewsProcessor:
                     summary_en TEXT,
                     summary_fa TEXT,
                     relevance_score REAL,
+                    content_quality TEXT,
                     posted BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # migration: add content_quality if old schema
+            try:
+                conn.execute("ALTER TABLE articles ADD COLUMN content_quality TEXT")
+            except Exception:
+                pass
+
+    # ── Main pipeline ─────────────────────────────────────────────────────────
 
     def process_news(self) -> NewsResult:
         start_time = datetime.now()
         result = NewsResult()
         try:
-            self.logger.info(f"Starting news processing for {self.config['city_name']}")
+            self.logger.info(f"Starting for {self.config['city_name']}")
             articles = self._fetch_articles()
             result.processed = len(articles)
 
             max_posts = self.config.get("max_posts_per_run", 5)
-            for article in articles[:max_posts]:
+            for article in articles:
+                if result.posted >= max_posts:
+                    break
                 if self._process_and_post_article(article):
                     result.posted += 1
                     result.articles.append(article)
                     time.sleep(TELEGRAM_POST_DELAY)
 
             result.status = "success"
-            self.logger.info(f"Completed: {result.processed} fetched, {result.posted} posted")
+            self.logger.info(f"Done: {result.processed} fetched, {result.posted} posted")
         except Exception as e:
             result.status = "error"
             result.error_message = str(e)
@@ -115,14 +140,10 @@ class NewsProcessor:
             result.duration = (datetime.now() - start_time).total_seconds()
         return result
 
+    # ── Fetching ──────────────────────────────────────────────────────────────
+
     def _fetch_articles(self) -> List[Dict[str, Any]]:
         articles = []
-        city = self.config["city_name"]
-        lang = self.config["news_language"]
-        country = self.config["country_code"]
-
-        # All sources come from the global feeds list — nothing is hardcoded.
-        # Each feed entry has: url, bypass_relevance
         sources = self.config.get("sources") or []
         for source in sources:
             feed_articles = self._fetch_from_rss(source["url"])
@@ -132,18 +153,18 @@ class NewsProcessor:
             articles.extend(feed_articles)
 
         # Deduplicate by URL
-        seen = set()
+        seen: set = set()
         unique = []
         for a in articles:
             if a["url"] not in seen:
                 seen.add(a["url"])
                 unique.append(a)
 
-        self.logger.info(f"Fetched {len(unique)} articles from {len(sources)} sources")
+        self.logger.info(f"Fetched {len(unique)} unique articles from {len(sources)} sources")
         return unique
 
     def _fetch_from_rss(self, feed_url: str) -> List[Dict[str, Any]]:
-        """Fetch articles from any RSS/Atom feed URL. Supports {city}, {language}, {country} placeholders."""
+        """Parse an RSS/Atom feed. Extracts description/content when available."""
         try:
             resolved_url = feed_url.format(
                 city=self.config.get("city_name", ""),
@@ -152,62 +173,115 @@ class NewsProcessor:
             )
             feed = feedparser.parse(resolved_url)
             articles = []
-            for entry in feed.entries[:20]:
+            for entry in feed.entries[:25]:
+                rss_description = None
+
+                # entry.content — some feeds provide full article body
+                if entry.get("content"):
+                    raw = entry.content[0].get("value", "")
+                    if raw:
+                        rss_description = _clean_html(raw)
+
+                # entry.summary / entry.description — snippet
+                if not rss_description:
+                    raw = entry.get("summary") or entry.get("description") or ""
+                    if raw:
+                        rss_description = _clean_html(raw)
+
                 articles.append({
                     "title": entry.get("title", ""),
                     "url": entry.get("link", ""),
                     "source": feed.feed.get("title", feed_url),
                     "published_at": entry.get("published"),
+                    "rss_description": rss_description,
+                    "author": entry.get("author"),
                 })
-            self.logger.info(f"Fetched {len(articles)} from {resolved_url}")
+
+            with_desc = sum(1 for a in articles if a.get("rss_description"))
+            self.logger.info(f"  {resolved_url[:60]}… → {len(articles)} articles, {with_desc} with descriptions")
             return articles
         except Exception as e:
-            self.logger.warning(f"Failed to fetch RSS {feed_url}: {e}")
+            self.logger.warning(f"RSS fetch failed {feed_url}: {e}")
             return []
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    def _fetch_from_newsapi(self) -> List[Dict[str, Any]]:
-        response = requests.get(
-            "https://newsapi.org/v2/everything",
-            params={
-                "q": self.config["city_name"],
-                "language": self.config["news_language"],
-                "sortBy": "publishedAt",
-                "pageSize": 20,
-                "apiKey": self.config["newsapi_key"],
-            },
-            timeout=10,
-        )
-        if response.status_code == 200:
-            return [
-                {
-                    "title": a["title"],
-                    "url": a["url"],
-                    "source": a["source"]["name"],
-                    "published_at": a["publishedAt"],
-                }
-                for a in response.json().get("articles", [])
-            ]
-        return []
+    # ── Content extraction ────────────────────────────────────────────────────
+
+    def _resolve_url(self, url: str) -> str:
+        """Follow redirects (Google News, t.co, etc.) to get the real article URL."""
+        if not any(d in url for d in ("news.google.com", "t.co", "bit.ly", "ow.ly")):
+            return url
+        try:
+            resp = requests.head(
+                url, allow_redirects=True, timeout=8,
+                headers={"User-Agent": USER_AGENT},
+            )
+            return resp.url
+        except Exception:
+            return url
+
+    def _extract_content_with_quality(self, article: Dict[str, Any]) -> Tuple[str, str]:
+        """
+        Return (content, quality) using the best available source:
+          full_article   — scraped body ≥ 300 chars
+          rss_description — description from the RSS feed
+          title_only     — nothing but the headline
+        """
+        # 1. Try to scrape full article (resolve redirects first)
+        real_url = self._resolve_url(article["url"])
+        scraped = self._scrape_article(real_url)
+        if scraped and len(scraped) >= 300:
+            return scraped, QUALITY_FULL
+
+        # 2. RSS description
+        rss_desc = (article.get("rss_description") or "").strip()
+        if len(rss_desc) >= 60:
+            return rss_desc, QUALITY_RSS
+
+        # 3. Title only
+        return article.get("title", ""), QUALITY_TITLE
+
+    def _scrape_article(self, url: str) -> Optional[str]:
+        """Fetch and parse article body with browser headers."""
+        try:
+            resp = requests.get(
+                url, timeout=12,
+                headers={"User-Agent": USER_AGENT},
+            )
+            if resp.status_code != 200:
+                return None
+            art = Article(url)
+            art.set_html(resp.text)
+            art.parse()
+            return art.text if art.text and len(art.text) >= 100 else None
+        except Exception as e:
+            self.logger.debug(f"Scrape failed {url}: {e}")
+            return None
+
+    # ── Article pipeline ──────────────────────────────────────────────────────
 
     def _process_and_post_article(self, article: Dict[str, Any]) -> bool:
         try:
             if self._article_exists(article["url"]):
                 return False
 
-            content = self._extract_content(article["url"])
-            if not content or len(content) < 200:
-                self.logger.info(f"Skipping short/empty content: {article['url']}")
+            content, quality = self._extract_content_with_quality(article)
+
+            if not content:
                 return False
 
-            relevance_score = self._calculate_relevance(article["title"], content)
-            if relevance_score < RELEVANCE_THRESHOLD:
-                self.logger.info(f"Not relevant ({relevance_score:.2f}): {article['title']}")
-                return False
+            # Relevance check
+            if not article.get("_bypass_relevance"):
+                score = self._calculate_relevance(article["title"], content)
+                if score < RELEVANCE_THRESHOLD:
+                    self.logger.info(f"Irrelevant ({score:.2f}): {article['title'][:60]}")
+                    return False
+            else:
+                score = 1.0
 
-            summaries = self._summarize_and_translate(content)
+            summaries = self._summarize_and_translate(
+                content, article["title"], article.get("source", ""), quality
+            )
             if not summaries:
-                self.logger.warning(f"Summarization failed: {article['title']}")
                 return False
 
             success = self._post_to_telegram(
@@ -215,9 +289,10 @@ class NewsProcessor:
                 summary=summaries["summary_fa"],
                 url=article["url"],
                 source=article.get("source", "Unknown"),
+                quality=quality,
             )
             self._save_article(article, summaries["summary_en"], summaries["summary_fa"],
-                               relevance_score, posted=success)
+                               score, quality, posted=success)
             return success
         except Exception as e:
             self.logger.error(f"Error processing '{article.get('title', '')}': {e}")
@@ -229,20 +304,9 @@ class NewsProcessor:
                 "SELECT 1 FROM articles WHERE url = ?", (url,)
             ).fetchone() is not None
 
-    @retry(stop=stop_after_attempt(2), wait=wait_fixed(2),
-           retry=retry_if_exception_type(Exception))
-    def _extract_content(self, url: str) -> Optional[str]:
-        try:
-            article = Article(url)
-            article.download()
-            article.parse()
-            return article.text
-        except Exception as e:
-            self.logger.warning(f"Content extraction failed for {url}: {e}")
-            return None
+    # ── Relevance ─────────────────────────────────────────────────────────────
 
     def _calculate_relevance(self, title: str, content: str) -> float:
-        """LLM relevance scoring when OpenAI is available, keyword fallback otherwise."""
         if self.openai_client:
             try:
                 city = self.config["city_name"]
@@ -253,109 +317,150 @@ class NewsProcessor:
                             "role": "system",
                             "content": (
                                 f"Determine if this news article is specifically about {city}. "
-                                f"Reply with only valid JSON: "
-                                f'{{\"relevant\": true/false, \"score\": 0.0-1.0}}'
+                                f'Reply with only valid JSON: {{"relevant": true/false, "score": 0.0-1.0}}'
                             ),
                         },
                         {"role": "user", "content": f"Title: {title}\n\nContent: {content[:500]}"},
                     ],
-                    max_tokens=40,
-                    temperature=0,
+                    max_tokens=40, temperature=0,
                 )
                 data = json.loads(response.choices[0].message.content.strip())
                 return float(data.get("score", 0.0))
             except Exception as e:
-                self.logger.warning(f"LLM relevance check failed, using keyword fallback: {e}")
+                self.logger.warning(f"LLM relevance failed, using keywords: {e}")
 
-        # Keyword fallback (no OpenAI key or LLM call failed)
+        # Keyword fallback
         city = self.config["city_name"].lower()
         country = self.config["country_code"].lower()
-        title_l = title.lower()
-        content_l = content.lower()
+        tl, cl = title.lower(), content.lower()
         score = 0.0
-        if city in title_l:
-            score += 0.5
-        if city in content_l:
-            score += 0.3
-        if country in title_l:
-            score += 0.2
+        if city in tl: score += 0.5
+        if city in cl: score += 0.3
+        if country in tl: score += 0.2
         return min(score, 1.0)
 
-    def _summarize_and_translate(self, content: str) -> Optional[Dict[str, str]]:
-        """Summarize with LLM (if available), translate to Persian with LibreTranslate or LLM."""
-        libretranslate_url = self.config.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL")
-        summary_en = self._summarize(content)
-        if not summary_en:
-            return None
-        summary_fa = self._translate_to_persian(summary_en, libretranslate_url)
-        return {"summary_en": summary_en, "summary_fa": summary_fa}
+    # ── Summarise + translate (single LLM call) ───────────────────────────────
 
-    def _summarize(self, content: str) -> Optional[str]:
-        """Summarize content in English using LLM, or fall back to excerpt."""
+    def _summarize_and_translate(self, content: str, title: str,
+                                  source: str, quality: str) -> Optional[Dict[str, str]]:
+        """
+        One LLM call that produces both an English summary and a Persian translation.
+        The prompt adapts to the available content quality.
+        Falls back to MyMemory → LibreTranslate when no LLM is configured.
+        """
+        libretranslate_url = self.config.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL")
+
         if self.openai_client:
             try:
+                if quality == QUALITY_FULL:
+                    instruction = (
+                        "Summarise this news article in 3 concise sentences. "
+                        "Cover: what happened, who is involved, and why it matters."
+                    )
+                elif quality == QUALITY_RSS:
+                    instruction = (
+                        "Based on this news snippet, write a 2-sentence summary: "
+                        "what happened and who is involved."
+                    )
+                else:
+                    instruction = (
+                        "This is a headline only. "
+                        "Write 1 sentence describing what this news item is about."
+                    )
+
                 response = self.openai_client.chat.completions.create(
                     model=self.model,
                     messages=[
                         {
                             "role": "system",
-                            "content": "Summarize the following news article in 2-3 concise sentences.",
+                            "content": (
+                                f"You are a news editor. {instruction} "
+                                "Return valid JSON with exactly two fields: "
+                                "'summary_en' (English summary) and "
+                                "'summary_fa' (Persian translation of the summary)."
+                            ),
                         },
-                        {"role": "user", "content": content[:2000]},
+                        {
+                            "role": "user",
+                            "content": f"Source: {source}\nTitle: {title}\n\nContent:\n{content[:3000]}",
+                        },
                     ],
-                    max_tokens=200,
-                    temperature=0.3,
+                    max_tokens=400, temperature=0.3,
                 )
-                return response.choices[0].message.content.strip()
+                raw = response.choices[0].message.content.strip()
+                # Strip markdown code fences if the model wraps output
+                raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+                return json.loads(raw)
             except Exception as e:
-                self.logger.error(f"Summarization error: {e}")
-        return content[:200] + ("..." if len(content) > 200 else "")
+                self.logger.error(f"LLM summarise+translate failed: {e}")
+                # Fall through to non-LLM path
+
+        # No LLM — use content excerpt and translate separately
+        summary_en = content[:300] + ("..." if len(content) > 300 else "")
+        summary_fa = self._translate_to_persian(summary_en, libretranslate_url)
+        return {"summary_en": summary_en, "summary_fa": summary_fa}
+
+    # ── Translation ───────────────────────────────────────────────────────────
 
     def _translate_to_persian(self, text: str, libretranslate_url: Optional[str] = None) -> str:
-        """Translate English to Persian via LibreTranslate, LLM fallback, then original."""
+        """Translate English → Persian. Priority: MyMemory → LibreTranslate → original."""
+        # MyMemory: free, no key, solid Persian quality
+        translated = self._translate_mymemory(text)
+        if translated:
+            return translated
+
+        # LibreTranslate: local, offline
         if libretranslate_url:
             try:
-                response = requests.post(
+                resp = requests.post(
                     f"{libretranslate_url.rstrip('/')}/translate",
                     json={"q": text, "source": "en", "target": "fa", "format": "text"},
                     timeout=15,
                 )
-                if response.status_code == 200:
-                    return response.json().get("translatedText", text)
-                self.logger.warning(f"LibreTranslate {response.status_code}: {response.text}")
+                if resp.status_code == 200:
+                    return resp.json().get("translatedText", text)
+                self.logger.warning(f"LibreTranslate {resp.status_code}")
             except Exception as e:
                 self.logger.warning(f"LibreTranslate failed: {e}")
 
-        if self.openai_client:
-            try:
-                response = self.openai_client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": "Translate the following English text to Persian."},
-                        {"role": "user", "content": text},
-                    ],
-                    max_tokens=300,
-                    temperature=0.3,
-                )
-                return response.choices[0].message.content.strip()
-            except Exception as e:
-                self.logger.error(f"LLM translation error: {e}")
-
         return text
 
-    def _post_to_telegram(self, title: str, summary: str, url: str, source: str) -> bool:
+    def _translate_mymemory(self, text: str) -> Optional[str]:
+        """MyMemory free translation API — up to 500 chars, no key needed."""
+        if not text or not text.strip():
+            return None
+        try:
+            resp = requests.get(
+                "https://api.mymemory.translated.net/get",
+                params={"q": text[:500], "langpair": "en|fa"},
+                timeout=8,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("responseStatus") == 200:
+                    translated = data["responseData"]["translatedText"]
+                    if translated and "PLEASE SELECT" not in translated and len(translated) > 5:
+                        return translated
+        except Exception as e:
+            self.logger.debug(f"MyMemory failed: {e}")
+        return None
+
+    # ── Telegram ──────────────────────────────────────────────────────────────
+
+    def _post_to_telegram(self, title: str, summary: str, url: str,
+                           source: str, quality: str = "") -> bool:
+        quality_icon = {QUALITY_FULL: "📰", QUALITY_RSS: "📋", QUALITY_TITLE: "🔖"}.get(quality, "")
         message = (
             f"<b>{title}</b>\n\n"
             f"{summary}\n\n"
-            f'<a href="{url}">متن کامل</a> | {source}'
+            f'{quality_icon} <a href="{url}">متن کامل</a> | {source}'
         )
 
         async def _send():
             async with self.telegram_bot:
                 await self.telegram_bot.send_message(
                     chat_id=self.config["telegram_chat_id"],
-                    text=message,
-                    parse_mode="HTML",
+                    text=message, parse_mode="HTML",
                     disable_web_page_preview=False,
                 )
 
@@ -363,33 +468,38 @@ class NewsProcessor:
             _run_async(_send())
             return True
         except telegram.error.RetryAfter as e:
-            self.logger.warning(f"Telegram rate limit hit, waiting {e.retry_after}s")
+            self.logger.warning(f"Telegram rate limit, waiting {e.retry_after}s")
             time.sleep(e.retry_after)
             try:
                 _run_async(_send())
                 return True
-            except Exception as retry_err:
-                self.logger.error(f"Telegram retry failed: {retry_err}")
+            except Exception as err:
+                self.logger.error(f"Telegram retry failed: {err}")
                 return False
         except Exception as e:
             self.logger.error(f"Telegram posting error: {e}")
             return False
 
+    # ── Persistence ───────────────────────────────────────────────────────────
+
     def _save_article(self, article: Dict[str, Any], summary_en: str, summary_fa: str,
-                      relevance_score: float, posted: bool):
+                      relevance_score: float, content_quality: str, posted: bool):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO articles
-                (title, url, source, published_at, summary_en, summary_fa, relevance_score, posted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (title, url, source, published_at, summary_en, summary_fa,
+                 relevance_score, content_quality, posted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     article["title"], article["url"], article.get("source"),
                     article.get("published_at"), summary_en, summary_fa,
-                    relevance_score, posted,
+                    relevance_score, content_quality, posted,
                 ),
             )
+
+    # ── Misc ──────────────────────────────────────────────────────────────────
 
     def test_connection(self) -> bool:
         async def _test():
@@ -403,17 +513,13 @@ class NewsProcessor:
             return False
 
     def get_sentiment(self, titles: List[str], finbert_url: str) -> Dict[str, Any]:
-        """Call the FinBERT sentiment service with a batch of titles.
-        Returns a dict keyed by title with {label, score}."""
         try:
-            response = requests.post(
+            resp = requests.post(
                 f"{finbert_url.rstrip('/')}/sentiment",
-                json={"texts": titles},
-                timeout=15,
+                json={"texts": titles}, timeout=15,
             )
-            if response.status_code == 200:
-                data = response.json()
-                return {d["text"][:120]: d for d in data.get("details", [])}
+            if resp.status_code == 200:
+                return {d["text"][:120]: d for d in resp.json().get("details", [])}
         except Exception as e:
             self.logger.warning(f"FinBERT call failed: {e}")
         return {}
@@ -422,19 +528,16 @@ class NewsProcessor:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 total = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
-                posted = conn.execute(
-                    "SELECT COUNT(*) FROM articles WHERE posted = 1"
-                ).fetchone()[0]
-                last_posted = conn.execute(
-                    "SELECT created_at FROM articles WHERE posted = 1 ORDER BY created_at DESC LIMIT 1"
+                posted = conn.execute("SELECT COUNT(*) FROM articles WHERE posted = 1").fetchone()[0]
+                last = conn.execute(
+                    "SELECT created_at FROM articles WHERE posted=1 ORDER BY created_at DESC LIMIT 1"
                 ).fetchone()
                 return {
                     "total_articles": total,
                     "posted_articles": posted,
                     "unposted_articles": total - posted,
-                    "last_posted_at": last_posted[0] if last_posted else None,
+                    "last_posted_at": last[0] if last else None,
                 }
         except Exception as e:
             self.logger.error(f"Stats error: {e}")
-            return {"total_articles": 0, "posted_articles": 0, "unposted_articles": 0,
-                    "last_posted_at": None}
+            return {"total_articles": 0, "posted_articles": 0, "unposted_articles": 0, "last_posted_at": None}
