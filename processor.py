@@ -378,14 +378,19 @@ class NewsProcessor:
                     )
                     content_block = f"Content:\n{content[:3000]}"
                 elif quality == QUALITY_RSS:
-                    # RSS snippet: translate to both English and Persian (no LLM needed)
+                    # RSS snippet: translate to English first, then English→Persian
                     summary_en = self._translate_to_english(content, source_lang)
-                    summary_fa = self._translate_to_persian(content, libretranslate_url, source_lang)
+                    # Always translate from English to Persian (avoids needing direct de→fa)
+                    en_for_fa = summary_en if summary_en != content else content
+                    en_source = "en" if summary_en != content else source_lang
+                    summary_fa = self._translate_to_persian(en_for_fa, libretranslate_url, en_source)
                     return {"summary_en": summary_en, "summary_fa": summary_fa}
                 else:
-                    # Title only: translate title to both languages
+                    # Title only: same two-step approach
                     summary_en = self._translate_to_english(content, source_lang)
-                    summary_fa = self._translate_to_persian(content, libretranslate_url, source_lang)
+                    en_for_fa = summary_en if summary_en != content else content
+                    en_source = "en" if summary_en != content else source_lang
+                    summary_fa = self._translate_to_persian(en_for_fa, libretranslate_url, en_source)
                     return {"summary_en": summary_en, "summary_fa": summary_fa}
 
                 user_msg = f"Publisher: {source}\nTitle: {title}"
