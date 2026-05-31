@@ -31,7 +31,11 @@ panel = Blueprint("panel", __name__, url_prefix="/panel")
 
 @panel.route("/")
 def index():
-    return render_template("panel.html")
+    resp = render_template("panel.html")
+    from flask import make_response
+    r = make_response(resp)
+    r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return r
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
