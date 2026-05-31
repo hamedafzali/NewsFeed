@@ -57,12 +57,17 @@ class NewsProcessor:
         self.telegram_bot = telegram.Bot(token=bot_config["bot_token"])
 
         self.openai_client: Optional[OpenAI] = None
-        self.model = bot_config.get("model", "gpt-4o-mini")
-        if bot_config.get("openai_api_key") or bot_config.get("ollama_base_url"):
-            self.openai_client = OpenAI(
-                api_key=bot_config.get("openai_api_key", "ollama"),
-                base_url=bot_config.get("ollama_base_url"),  # None = default OpenAI
-            )
+        ollama_base_url = bot_config.get("ollama_base_url") or os.getenv("OLLAMA_BASE_URL")
+        self.model = (
+            bot_config.get("model")
+            or os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+            if ollama_base_url
+            else bot_config.get("model", "gpt-4o-mini")
+        )
+        if bot_config.get("openai_api_key"):
+            self.openai_client = OpenAI(api_key=bot_config["openai_api_key"])
+        elif ollama_base_url:
+            self.openai_client = OpenAI(api_key="ollama", base_url=ollama_base_url)
 
         os.makedirs(DATA_DIR, exist_ok=True)
         self.db_path = os.path.join(DATA_DIR, f"bot_{bot_config.get('bot_id', 'default')}.db")
