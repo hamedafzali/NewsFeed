@@ -21,8 +21,13 @@ services:
       - BATCH_MAX_WORKERS=5
       # Data directory inside container (mounted below)
       - DATA_DIR=/app/data
+      # LibreTranslate URL (auto-set when using this compose file)
+      - LIBRETRANSLATE_URL=http://libretranslate:5000
     volumes:
       - ./data:/app/data
+    depends_on:
+      libretranslate:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
@@ -30,6 +35,27 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    container_name: libretranslate
+    ports:
+      - "5005:5000"
+    environment:
+      - LT_LOAD_ONLY=en,fa
+      - LT_DISABLE_WEB_UI=true
+    volumes:
+      - libretranslate-data:/home/libretranslate/.local
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5000/languages | grep -q 'Persian' || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+
+volumes:
+  libretranslate-data:
 
 networks:
   default:

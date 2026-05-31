@@ -153,6 +153,7 @@ def create_app():
             "ollama_base_url": body.get("ollama_base_url"),
             "model": body.get("model", "gpt-4o-mini"),
             "newsapi_key": body.get("newsapi_key"),
+            "libretranslate_url": body.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL"),
             "max_posts_per_run": max_results,
         }
         finbert_url = body.get("finbert_url")

@@ -251,7 +251,16 @@ class NewsProcessor:
         return min(score, 1.0)
 
     def _summarize_and_translate(self, content: str) -> Optional[Dict[str, str]]:
-        """Single OpenAI call producing both English summary and Persian translation."""
+        """Summarize with LLM (if available), translate to Persian with LibreTranslate or LLM."""
+        libretranslate_url = self.config.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL")
+        summary_en = self._summarize(content)
+        if not summary_en:
+            return None
+        summary_fa = self._translate_to_persian(summary_en, libretranslate_url)
+        return {"summary_en": summary_en, "summary_fa": summary_fa}
+
+    def _summarize(self, content: str) -> Optional[str]:
+        """Summarize content in English using LLM, or fall back to excerpt."""
         if self.openai_client:
             try:
                 response = self.openai_client.chat.completions.create(
@@ -259,26 +268,49 @@ class NewsProcessor:
                     messages=[
                         {
                             "role": "system",
-                            "content": (
-                                "Summarize the following news article in 2-3 sentences. "
-                                "Return valid JSON with exactly two fields: "
-                                "'summary_en' (English summary) and "
-                                "'summary_fa' (Persian translation of the summary)."
-                            ),
+                            "content": "Summarize the following news article in 2-3 concise sentences.",
                         },
                         {"role": "user", "content": content[:2000]},
                     ],
-                    max_tokens=400,
+                    max_tokens=200,
                     temperature=0.3,
                 )
-                return json.loads(response.choices[0].message.content.strip())
+                return response.choices[0].message.content.strip()
             except Exception as e:
                 self.logger.error(f"Summarization error: {e}")
-                return None
+        return content[:200] + ("..." if len(content) > 200 else "")
 
-        # Fallback when no OpenAI key
-        excerpt = content[:200] + ("..." if len(content) > 200 else "")
-        return {"summary_en": excerpt, "summary_fa": excerpt}
+    def _translate_to_persian(self, text: str, libretranslate_url: Optional[str] = None) -> str:
+        """Translate English to Persian via LibreTranslate, LLM fallback, then original."""
+        if libretranslate_url:
+            try:
+                response = requests.post(
+                    f"{libretranslate_url.rstrip('/')}/translate",
+                    json={"q": text, "source": "en", "target": "fa", "format": "text"},
+                    timeout=15,
+                )
+                if response.status_code == 200:
+                    return response.json().get("translatedText", text)
+                self.logger.warning(f"LibreTranslate {response.status_code}: {response.text}")
+            except Exception as e:
+                self.logger.warning(f"LibreTranslate failed: {e}")
+
+        if self.openai_client:
+            try:
+                response = self.openai_client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "Translate the following English text to Persian."},
+                        {"role": "user", "content": text},
+                    ],
+                    max_tokens=300,
+                    temperature=0.3,
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                self.logger.error(f"LLM translation error: {e}")
+
+        return text
 
     def _post_to_telegram(self, title: str, summary: str, url: str, source: str) -> bool:
         message = (
