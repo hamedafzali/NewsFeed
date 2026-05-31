@@ -192,16 +192,55 @@
     <!-- Quick-add popular feeds -->
     <div class="card stat-card mb-4 p-3">
       <div class="fw-semibold mb-3">Quick Add — Popular Sources</div>
-      <div class="row g-2" id="quick-feeds">
+      <div class="mb-3 mt-1">
+        <span class="badge bg-success-subtle text-success me-1">Green = Skip Relevance ON</span>
+        <span class="badge bg-secondary-subtle text-secondary me-1">Grey = Relevance filter ON</span>
+      </div>
+
+      <div class="fw-semibold small text-muted text-uppercase mb-2">German</div>
+      <div class="row g-2 mb-3">
         <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Google News','https://news.google.com/rss/search?q={city}&hl={language}&gl={country}',0)">+ Google News</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('DW English','https://rss.dw.com/rdf/rss-en-all',1)">+ DW English</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('BBC World','https://feeds.bbci.co.uk/news/world/rss.xml',1)">+ BBC World</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Reuters','https://feeds.reuters.com/reuters/topNews',1)">+ Reuters</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Al Jazeera','https://www.aljazeera.com/xml/rss/all.xml',1)">+ Al Jazeera</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('SWR Nachrichten','https://www.swr.de/nachrichten/rss/feed-nachrichten-alle.xml',1)">+ SWR</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success btn-sm" style="opacity:.8" onclick="quickAdd('Tagesschau','https://www.tagesschau.de/xml/rss2',1)">+ Tagesschau</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Süddeutsche Zeitung','https://rss.sueddeutsche.de/rss/Alles',1)">+ Süddeutsche Zeitung</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('SPIEGEL Online','https://www.spiegel.de/schlagzeilen/index.rss',1)">+ SPIEGEL</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('ZEIT Online','https://newsfeed.zeit.de/all',1)">+ ZEIT Online</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('FAZ','https://www.faz.net/rss/aktuell/',1)">+ FAZ</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('n-tv','https://www.n-tv.de/rss',1)">+ n-tv</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Focus Online','https://rss.focus.de/fol/XML/rss_folnews.xml',1)">+ Focus Online</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('WELT','https://www.welt.de/feeds/latest.rss',1)">+ WELT</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('stern.de','https://www.stern.de/feed/standard/all/',1)">+ stern.de</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Handelsblatt','https://www.handelsblatt.com/rss09/schlagzeilen.rss',1)">+ Handelsblatt</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('DW Deutsch','https://rss.dw.com/rdf/rss-de-all',1)">+ DW Deutsch</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Deutschlandfunk','https://www.deutschlandfunk.de/die-nachrichten.353.de.rss',1)">+ Deutschlandfunk</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('SWR BW','https://www.swr.de/swrde/nachrichten/bw/rss/feed-bw-nachrichten.xml',1)">+ SWR BW</button></div>
         <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Tagblatt Tübingen','https://www.tagblatt.de/rss/feed/',0)">+ Tagblatt Tübingen</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Guardian World','https://www.theguardian.com/world/rss',1)">+ Guardian</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('NPR News','https://feeds.npr.org/1001/rss.xml',1)">+ NPR</button></div>
+      </div>
+
+      <div class="fw-semibold small text-muted text-uppercase mb-2">International (English)</div>
+      <div class="row g-2 mb-3">
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('DW English','https://rss.dw.com/rdf/rss-en-all',1)">+ DW English</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('BBC World','https://feeds.bbci.co.uk/news/world/rss.xml',1)">+ BBC World</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Reuters','https://feeds.reuters.com/reuters/topNews',1)">+ Reuters</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Al Jazeera','https://www.aljazeera.com/xml/rss/all.xml',1)">+ Al Jazeera</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Guardian World','https://www.theguardian.com/world/rss',1)">+ Guardian</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('NPR News','https://feeds.npr.org/1001/rss.xml',1)">+ NPR</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Associated Press','https://feeds.ap.org/rss/apf-topnews',1)">+ AP</button></div>
+      </div>
+
+      <div class="fw-semibold small text-muted text-uppercase mb-2">Tech</div>
+      <div class="row g-2 mb-3">
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('heise Online','https://www.heise.de/rss/heise-atom.xml',1)">+ heise Online</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Golem.de','https://rss.golem.de/rss.php?feed=RSS2.0',1)">+ Golem.de</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('TechCrunch','https://techcrunch.com/feed/',1)">+ TechCrunch</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('The Verge','https://www.theverge.com/rss/index.xml',1)">+ The Verge</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Ars Technica','https://feeds.arstechnica.com/arstechnica/index',1)">+ Ars Technica</button></div>
+      </div>
+
+      <div class="fw-semibold small text-muted text-uppercase mb-2">Business & Finance</div>
+      <div class="row g-2">
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Wirtschaftswoche','https://www.wiwo.de/rss/politik-und-wirtschaft',1)">+ WirtschaftsWoche</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Financial Times','https://www.ft.com/rss/home/uk',1)">+ Financial Times</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Bloomberg','https://feeds.bloomberg.com/markets/news.rss',1)">+ Bloomberg</button></div>
       </div>
     </div>
 
