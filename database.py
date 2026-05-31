@@ -47,6 +47,14 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS global_feeds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL UNIQUE,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bot_id INTEGER,
@@ -206,3 +214,40 @@ def get_stats() -> Dict[str, Any]:
             "errors_today": today_errors,
             "total_posts": total_posts,
         }
+
+
+# --- Global Feeds ---
+
+def get_global_feeds(active_only: bool = False) -> List[Dict]:
+    with _conn() as c:
+        q = "SELECT * FROM global_feeds"
+        if active_only:
+            q += " WHERE active = 1"
+        q += " ORDER BY name"
+        return [dict(r) for r in c.execute(q).fetchall()]
+
+
+def add_global_feed(name: str, url: str) -> int:
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT OR IGNORE INTO global_feeds (name, url) VALUES (?, ?)", (name, url)
+        )
+        return cur.lastrowid
+
+
+def update_global_feed(feed_id: int, name: str = None, url: str = None, active: int = None):
+    updates = {}
+    if name is not None: updates["name"] = name
+    if url is not None: updates["url"] = url
+    if active is not None: updates["active"] = active
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    with _conn() as c:
+        c.execute(f"UPDATE global_feeds SET {set_clause} WHERE id = ?",
+                  list(updates.values()) + [feed_id])
+
+
+def delete_global_feed(feed_id: int):
+    with _conn() as c:
+        c.execute("DELETE FROM global_feeds WHERE id = ?", (feed_id,))

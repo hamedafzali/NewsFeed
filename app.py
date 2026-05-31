@@ -161,7 +161,7 @@ def create_app():
             "model": body.get("model", "gpt-4o-mini"),
             "newsapi_key": body.get("newsapi_key"),
             "libretranslate_url": body.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL"),
-            "custom_feeds": body.get("custom_feeds", []),
+            "custom_feeds": body.get("custom_feeds", []) + [f["url"] for f in db.get_global_feeds(active_only=True)],
             "max_posts_per_run": max_results,
         }
         finbert_url = body.get("finbert_url")

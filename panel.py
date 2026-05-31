@@ -177,6 +177,37 @@ def all_posts():
     return jsonify(db.get_posts(limit=limit))
 
 
+# ── Global Feeds ─────────────────────────────────────────────────────────────
+
+@panel.route("/api/feeds", methods=["GET"])
+def list_feeds():
+    return jsonify(db.get_global_feeds())
+
+
+@panel.route("/api/feeds", methods=["POST"])
+def create_feed():
+    data = request.get_json() or {}
+    if not data.get("url"):
+        return jsonify({"error": "url is required"}), 400
+    name = data.get("name") or data["url"]
+    feed_id = db.add_global_feed(name, data["url"])
+    return jsonify({"id": feed_id, "message": "Feed added"}), 201
+
+
+@panel.route("/api/feeds/<int:feed_id>", methods=["PUT"])
+def update_feed(feed_id):
+    data = request.get_json() or {}
+    db.update_global_feed(feed_id, name=data.get("name"), url=data.get("url"),
+                          active=data.get("active"))
+    return jsonify({"message": "Updated"})
+
+
+@panel.route("/api/feeds/<int:feed_id>", methods=["DELETE"])
+def delete_feed(feed_id):
+    db.delete_global_feed(feed_id)
+    return jsonify({"message": "Deleted"})
+
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 @panel.route("/api/settings")

@@ -172,8 +172,42 @@
   <!-- Settings -->
   <div class="page" id="page-settings">
     <h4 class="fw-bold mb-4">Settings</h4>
+
+    <!-- Global RSS Feeds -->
+    <div class="card stat-card mb-4">
+      <div class="card-header bg-white border-0 pt-3 d-flex justify-content-between align-items-center">
+        <div>
+          <div class="fw-semibold">Global RSS Feeds</div>
+          <div class="text-muted small">Added to every news fetch automatically</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openFeedModal()"><i class="bi bi-plus-lg me-1"></i>Add Feed</button>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Name</th><th>URL</th><th>Status</th><th></th></tr></thead>
+          <tbody id="feeds-table"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Quick-add popular feeds -->
+    <div class="card stat-card mb-4 p-3">
+      <div class="fw-semibold mb-3">Quick Add — Popular Sources</div>
+      <div class="row g-2" id="quick-feeds">
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('DW English','https://rss.dw.com/rdf/rss-en-all')">+ DW English</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('BBC World','https://feeds.bbci.co.uk/news/world/rss.xml')">+ BBC World</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Reuters','https://feeds.reuters.com/reuters/topNews')">+ Reuters</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Al Jazeera','https://www.aljazeera.com/xml/rss/all.xml')">+ Al Jazeera</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('SWR Nachrichten','https://www.swr.de/nachrichten/rss/feed-nachrichten-alle.xml')">+ SWR</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Tagblatt Tübingen','https://www.tagblatt.de/rss/feed/')">+ Tagblatt Tübingen</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Guardian World','https://www.theguardian.com/world/rss')">+ Guardian</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('NPR News','https://feeds.npr.org/1001/rss.xml')">+ NPR</button></div>
+      </div>
+    </div>
+
+    <!-- Server config -->
     <div class="card stat-card p-4">
-      <h6 class="text-muted text-uppercase small fw-bold mb-3">Active Configuration</h6>
+      <h6 class="text-muted text-uppercase small fw-bold mb-3">Server Configuration</h6>
       <div id="settings-list" class="row g-3"></div>
     </div>
   </div>
@@ -237,6 +271,27 @@
   </div>
 </div>
 
+<!-- Feed Modal -->
+<div class="modal fade" id="feed-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header border-0">
+        <h5 class="modal-title fw-bold">Add RSS Feed</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="feed-id">
+        <div class="mb-3"><label class="form-label small fw-semibold">Feed Name *</label><input type="text" class="form-control" id="feed-name" placeholder="BBC World News"></div>
+        <div class="mb-3"><label class="form-label small fw-semibold">RSS URL *</label><input type="url" class="form-control font-monospace" id="feed-url" placeholder="https://feeds.bbci.co.uk/news/world/rss.xml"></div>
+      </div>
+      <div class="modal-footer border-0">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveFeed()"><i class="bi bi-check-lg me-1"></i>Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div id="toast-container"></div>
 
@@ -257,7 +312,7 @@ document.querySelectorAll('[data-page]').forEach(link => {
     else if (page === 'bots') loadBots();
     else if (page === 'activity') loadActivity();
     else if (page === 'posts') loadPosts();
-    else if (page === 'settings') loadSettings();
+    else if (page === 'settings') { loadSettings(); loadFeeds(); }
   });
 });
 
@@ -576,6 +631,68 @@ async function loadSettings() {
         <div class="fw-semibold font-monospace small">${v || '<span class="text-muted">not set</span>'}</div>
       </div>
     </div>`).join('');
+}
+
+// ── Global Feeds ──────────────────────────────────────────────────────────────
+async function loadFeeds() {
+  const feeds = await api('/panel/api/feeds');
+  const tbody = document.getElementById('feeds-table');
+  tbody.innerHTML = feeds.length ? feeds.map(f => `
+    <tr>
+      <td class="fw-semibold">${f.name}</td>
+      <td><a href="${f.url}" target="_blank" class="font-monospace small text-muted text-decoration-none">${f.url}</a></td>
+      <td>
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" ${f.active ? 'checked' : ''} onchange="toggleFeed(${f.id}, this.checked)">
+        </div>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary me-1" onclick="editFeed(${f.id},'${f.name.replace(/'/g,"\\'")}','${f.url}')"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteFeed(${f.id})"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`).join('') :
+    '<tr><td colspan="4" class="empty-state"><i class="bi bi-rss"></i>No feeds yet. Add one above.</td></tr>';
+}
+
+function openFeedModal(id = '', name = '', url = '') {
+  document.getElementById('feed-id').value = id;
+  document.getElementById('feed-name').value = name;
+  document.getElementById('feed-url').value = url;
+  new bootstrap.Modal(document.getElementById('feed-modal')).show();
+}
+
+function editFeed(id, name, url) { openFeedModal(id, name, url); }
+
+async function saveFeed() {
+  const id = document.getElementById('feed-id').value;
+  const name = document.getElementById('feed-name').value.trim();
+  const url = document.getElementById('feed-url').value.trim();
+  if (!url) { toast('URL is required', 'error'); return; }
+  const method = id ? 'PUT' : 'POST';
+  const endpoint = id ? `/panel/api/feeds/${id}` : '/panel/api/feeds';
+  const res = await api(endpoint, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name: name || url, url }) });
+  if (res.error) { toast('Error: ' + res.error, 'error'); return; }
+  bootstrap.Modal.getInstance(document.getElementById('feed-modal')).hide();
+  toast(id ? 'Feed updated' : 'Feed added');
+  loadFeeds();
+}
+
+async function deleteFeed(id) {
+  if (!confirm('Remove this feed?')) return;
+  await api(`/panel/api/feeds/${id}`, { method: 'DELETE' });
+  toast('Feed removed');
+  loadFeeds();
+}
+
+async function toggleFeed(id, active) {
+  await api(`/panel/api/feeds/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ active: active ? 1 : 0 }) });
+}
+
+async function quickAdd(name, url) {
+  const res = await api('/panel/api/feeds', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, url }) });
+  if (res.error) { toast('Already added or error: ' + res.error, 'error'); return; }
+  toast(`${name} added`);
+  loadFeeds();
 }
 
 // Init
