@@ -371,17 +371,17 @@ class NewsProcessor:
         if self.openai_client:
             try:
                 if quality == QUALITY_FULL:
+                    # Full article: always worth an LLM summarization call
                     instruction = (
                         f"Summarise this news article in 3 concise sentences.{lang_note} "
                         "Cover: what happened, who is involved, and why it matters."
                     )
                     content_block = f"Content:\n{content[:3000]}"
                 elif quality == QUALITY_RSS:
-                    instruction = (
-                        f"Based on this news snippet, write a 2-sentence summary.{lang_note} "
-                        "Cover: what happened and who is involved."
-                    )
-                    content_block = f"Snippet:\n{content[:1000]}"
+                    # RSS snippet: skip LLM, just translate directly (faster, quality is fine)
+                    summary_en = content
+                    summary_fa = self._translate_to_persian(content, libretranslate_url, source_lang)
+                    return {"summary_en": summary_en, "summary_fa": summary_fa}
                 else:
                     # Title only — use LLM background knowledge to expand the headline.
                     # Do NOT invent specific facts (dates, names, numbers) not in the headline.
