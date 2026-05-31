@@ -704,12 +704,15 @@ async function runPreview() {
         <div class="d-flex justify-content-between align-items-start mb-1">
           <a href="${a.url}" target="_blank" class="fw-semibold text-decoration-none">${a.title}</a>
           <div class="d-flex gap-1 ms-2 flex-shrink-0 flex-wrap justify-content-end">
-            ${qualityBadge(a.content_quality)}
             <span class="badge bg-primary bg-opacity-25 text-primary badge-relevance">${(a.relevance_score*100).toFixed(0)}%</span>
             ${sentimentBadge(a.sentiment)}
           </div>
         </div>
-        <div class="small text-muted mb-1"><i class="bi bi-broadcast me-1"></i>${a.source || '—'}</div>
+        <div class="d-flex gap-3 small text-muted mb-1">
+          <span><i class="bi bi-broadcast me-1"></i>${a.source || '—'}</span>
+          ${a.published_at ? `<span><i class="bi bi-calendar3 me-1"></i>${fmtTime(a.published_at)}</span>` : ''}
+          <span class="ms-auto">${qualityBadge(a.content_quality)}</span>
+        </div>
         ${a.summary_en && a.summary_en !== a.title ? `<div class="small text-muted mb-1">${a.summary_en}</div>` : ''}
         ${a.summary_fa ? `<div class="summary-fa">${a.summary_fa}</div>` : ''}
       </div>`).join('');
