@@ -223,7 +223,8 @@ def create_app():
 
                 # Summarise + translate in one LLM call (quality-aware prompt)
                 summaries = processor._summarize_and_translate(
-                    content, article["title"], article.get("source", ""), quality
+                    content, article["title"], article.get("source", ""), quality,
+                    source_lang=article.get("feed_language", "en"),
                 )
 
                 results.append({

@@ -173,6 +173,7 @@ class NewsProcessor:
             )
             feed = feedparser.parse(resolved_url)
             is_google_news = "news.google.com" in resolved_url
+            feed_language = feed.feed.get("language", "").split("-")[0].lower() or "en"
             articles = []
             for entry in feed.entries[:25]:
                 rss_description = None
@@ -205,6 +206,7 @@ class NewsProcessor:
                     "published_at": entry.get("published"),
                     "rss_description": rss_description,
                     "is_google_news": is_google_news,
+                    "feed_language": feed_language,
                     "author": entry.get("author"),
                 })
 
@@ -292,7 +294,8 @@ class NewsProcessor:
                 score = 1.0
 
             summaries = self._summarize_and_translate(
-                content, article["title"], article.get("source", ""), quality
+                content, article["title"], article.get("source", ""), quality,
+                source_lang=article.get("feed_language", "en"),
             )
             if not summaries:
                 return False
@@ -355,7 +358,8 @@ class NewsProcessor:
     # ── Summarise + translate (single LLM call) ───────────────────────────────
 
     def _summarize_and_translate(self, content: str, title: str,
-                                  source: str, quality: str) -> Optional[Dict[str, str]]:
+                                  source: str, quality: str,
+                                  source_lang: str = "en") -> Optional[Dict[str, str]]:
         """
         One LLM call that produces both an English summary and a Persian translation.
         The prompt adapts to the available content quality.
@@ -363,18 +367,20 @@ class NewsProcessor:
         """
         libretranslate_url = self.config.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL")
 
+            lang_note = f" The content is in {source_lang.upper()}." if source_lang != "en" else ""
+
         if self.openai_client:
             try:
                 if quality == QUALITY_FULL:
                     instruction = (
-                        "Summarise this news article in 3 concise sentences. "
+                        f"Summarise this news article in 3 concise sentences.{lang_note} "
                         "Cover: what happened, who is involved, and why it matters."
                     )
                     content_block = f"Content:\n{content[:3000]}"
                 elif quality == QUALITY_RSS:
                     instruction = (
-                        "Based on this news snippet, write a 2-sentence summary: "
-                        "what happened and who is involved."
+                        f"Based on this news snippet, write a 2-sentence summary.{lang_note} "
+                        "Cover: what happened and who is involved."
                     )
                     content_block = f"Snippet:\n{content[:1000]}"
                 else:
@@ -419,15 +425,15 @@ class NewsProcessor:
 
         # No LLM — use content excerpt and translate separately
         summary_en = content[:300] + ("..." if len(content) > 300 else "")
-        summary_fa = self._translate_to_persian(summary_en, libretranslate_url)
+        summary_fa = self._translate_to_persian(summary_en, libretranslate_url, source_lang)
         return {"summary_en": summary_en, "summary_fa": summary_fa}
 
     # ── Translation ───────────────────────────────────────────────────────────
 
-    def _translate_to_persian(self, text: str, libretranslate_url: Optional[str] = None) -> str:
-        """Translate English → Persian. Priority: MyMemory → LibreTranslate → original."""
-        # MyMemory: free, no key, solid Persian quality
-        translated = self._translate_mymemory(text)
+    def _translate_to_persian(self, text: str, libretranslate_url: Optional[str] = None,
+                               source_lang: str = "en") -> str:
+        """Translate to Persian. Priority: MyMemory → LibreTranslate → original."""
+        translated = self._translate_mymemory(text, source_lang)
         if translated:
             return translated
 
@@ -436,7 +442,7 @@ class NewsProcessor:
             try:
                 resp = requests.post(
                     f"{libretranslate_url.rstrip('/')}/translate",
-                    json={"q": text, "source": "en", "target": "fa", "format": "text"},
+                    json={"q": text, "source": source_lang, "target": "fa", "format": "text"},
                     timeout=15,
                 )
                 if resp.status_code == 200:
@@ -447,14 +453,14 @@ class NewsProcessor:
 
         return text
 
-    def _translate_mymemory(self, text: str) -> Optional[str]:
+    def _translate_mymemory(self, text: str, source_lang: str = "en") -> Optional[str]:
         """MyMemory free translation API — up to 500 chars, no key needed."""
         if not text or not text.strip():
             return None
         try:
             resp = requests.get(
                 "https://api.mymemory.translated.net/get",
-                params={"q": text[:500], "langpair": "en|fa"},
+                params={"q": text[:500], "langpair": f"{source_lang}|fa"},
                 timeout=8,
             )
             if resp.status_code == 200:
