@@ -378,14 +378,15 @@ class NewsProcessor:
                     )
                     content_block = f"Content:\n{content[:3000]}"
                 elif quality == QUALITY_RSS:
-                    # RSS snippet: skip LLM, just translate directly (faster)
-                    summary_en = content
+                    # RSS snippet: translate to both English and Persian (no LLM needed)
+                    summary_en = self._translate_to_english(content, source_lang)
                     summary_fa = self._translate_to_persian(content, libretranslate_url, source_lang)
                     return {"summary_en": summary_en, "summary_fa": summary_fa}
                 else:
-                    # Title only: no LLM, just translate the title (fast)
+                    # Title only: translate title to both languages
+                    summary_en = self._translate_to_english(content, source_lang)
                     summary_fa = self._translate_to_persian(content, libretranslate_url, source_lang)
-                    return {"summary_en": content, "summary_fa": summary_fa}
+                    return {"summary_en": summary_en, "summary_fa": summary_fa}
 
                 user_msg = f"Publisher: {source}\nTitle: {title}"
                 if content_block:
@@ -451,14 +452,24 @@ class NewsProcessor:
 
         return text
 
-    def _translate_mymemory(self, text: str, source_lang: str = "en") -> Optional[str]:
+    def _translate_to_english(self, text: str, source_lang: str = "en") -> str:
+        """Translate text to English if it's not already English."""
+        if source_lang == "en" or not text:
+            return text
+        translated = self._translate_mymemory(text, source_lang, target="en")
+        return translated if translated else text
+
+    def _translate_mymemory(self, text: str, source_lang: str = "en",
+                             target: str = "fa") -> Optional[str]:
         """MyMemory free translation API — up to 500 chars, no key needed."""
         if not text or not text.strip():
             return None
+        if source_lang == target:
+            return text
         try:
             resp = requests.get(
                 "https://api.mymemory.translated.net/get",
-                params={"q": text[:500], "langpair": f"{source_lang}|fa"},
+                params={"q": text[:500], "langpair": f"{source_lang}|{target}"},
                 timeout=8,
             )
             if resp.status_code == 200:
