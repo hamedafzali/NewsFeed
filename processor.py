@@ -122,6 +122,7 @@ class NewsProcessor:
         lang = self.config["news_language"]
         country = self.config["country_code"]
 
+        # Google News RSS
         rss_url = f"https://news.google.com/rss/search?q={city}&hl={lang}&gl={country}"
         feed = feedparser.parse(rss_url)
         for entry in feed.entries[:20]:
@@ -132,12 +133,47 @@ class NewsProcessor:
                 "published_at": entry.get("published"),
             })
 
+        # Custom RSS feeds
+        custom_feeds = self.config.get("custom_feeds") or []
+        if isinstance(custom_feeds, str):
+            # Accept newline or comma separated strings
+            custom_feeds = [f.strip() for f in custom_feeds.replace(",", "\n").splitlines() if f.strip()]
+        for feed_url in custom_feeds:
+            articles.extend(self._fetch_from_rss(feed_url))
+
+        # NewsAPI
         newsapi_key = self.config.get("newsapi_key", "")
         if newsapi_key and newsapi_key != "your_newsapi_key_here":
             articles.extend(self._fetch_from_newsapi())
 
-        self.logger.info(f"Fetched {len(articles)} articles")
-        return articles
+        # Deduplicate by URL
+        seen = set()
+        unique = []
+        for a in articles:
+            if a["url"] not in seen:
+                seen.add(a["url"])
+                unique.append(a)
+
+        self.logger.info(f"Fetched {len(unique)} articles ({len(custom_feeds)} custom feeds)")
+        return unique
+
+    def _fetch_from_rss(self, feed_url: str) -> List[Dict[str, Any]]:
+        """Fetch articles from any RSS/Atom feed URL."""
+        try:
+            feed = feedparser.parse(feed_url)
+            articles = []
+            for entry in feed.entries[:20]:
+                articles.append({
+                    "title": entry.get("title", ""),
+                    "url": entry.get("link", ""),
+                    "source": feed.feed.get("title", feed_url),
+                    "published_at": entry.get("published"),
+                })
+            self.logger.info(f"Fetched {len(articles)} articles from {feed_url}")
+            return articles
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch RSS {feed_url}: {e}")
+            return []
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def _fetch_from_newsapi(self) -> List[Dict[str, Any]]:

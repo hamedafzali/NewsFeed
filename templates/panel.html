@@ -160,6 +160,7 @@
         <div class="col-md-2"><label class="form-label small fw-semibold">Language</label><input type="text" class="form-control" id="prev-lang" placeholder="en" value="en" maxlength="5"></div>
         <div class="col-md-2"><label class="form-label small fw-semibold">Max Results</label><input type="number" class="form-control" id="prev-max" value="5" min="1" max="20"></div>
         <div class="col-md-3"><label class="form-label small fw-semibold">OpenAI Key (optional)</label><input type="password" class="form-control" id="prev-openai" placeholder="sk-..."></div>
+        <div class="col-12"><label class="form-label small fw-semibold">Custom RSS Feeds (optional, one per line)</label><textarea class="form-control font-monospace" id="prev-feeds" rows="3" placeholder="https://rss.dw.com/rdf/rss-en-all&#10;https://feeds.bbci.co.uk/news/rss.xml"></textarea></div>
       </div>
       <div class="mt-3">
         <button class="btn btn-primary" id="preview-btn" onclick="runPreview()"><i class="bi bi-search me-1"></i>Fetch News</button>
@@ -201,6 +202,12 @@
           <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">API Keys (optional)</h6></div>
           <div class="col-md-6"><label class="form-label small fw-semibold">OpenAI API Key</label><input type="password" class="form-control" id="bot-openai" placeholder="sk-..."></div>
           <div class="col-md-6"><label class="form-label small fw-semibold">NewsAPI Key</label><input type="password" class="form-control" id="bot-newsapi" placeholder="..."></div>
+          <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">Custom RSS Feeds (optional)</h6></div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">RSS Feed URLs</label>
+            <textarea class="form-control font-monospace" id="bot-feeds" rows="4" placeholder="One URL per line, e.g.:&#10;https://rss.dw.com/rdf/rss-en-all&#10;https://feeds.bbci.co.uk/news/rss.xml&#10;https://www.tagblatt.de/rss/feed/"></textarea>
+            <div class="form-text">One RSS/Atom URL per line. These are fetched in addition to Google News.</div>
+          </div>
           <div class="col-12 d-flex align-items-center gap-2">
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" id="bot-active" checked>
@@ -417,6 +424,7 @@ function openBotModal(bot = null) {
   document.getElementById('bot-chatid').value = bot?.telegram_chat_id || '';
   document.getElementById('bot-openai').value = '';
   document.getElementById('bot-newsapi').value = '';
+  document.getElementById('bot-feeds').value = bot?.custom_feeds || '';
   document.getElementById('bot-active').checked = bot ? !!bot.active : true;
   new bootstrap.Modal(document.getElementById('bot-modal')).show();
 }
@@ -443,6 +451,8 @@ async function saveBot() {
   if (openai) data.openai_api_key = openai;
   const newsapi = document.getElementById('bot-newsapi').value;
   if (newsapi) data.newsapi_key = newsapi;
+  const feeds = document.getElementById('bot-feeds').value.trim();
+  if (feeds) data.custom_feeds = feeds;
 
   const url = id ? `/panel/api/bots/${id}` : '/panel/api/bots';
   const method = id ? 'PUT' : 'POST';
@@ -514,6 +524,8 @@ async function runPreview() {
   };
   const openai = document.getElementById('prev-openai').value;
   if (openai) body.openai_api_key = openai;
+  const feeds = document.getElementById('prev-feeds').value.trim();
+  if (feeds) body.custom_feeds = feeds.split('\n').map(s => s.trim()).filter(Boolean);
 
   try {
     const res = await api('/api/news', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });

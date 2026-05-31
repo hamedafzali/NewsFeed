@@ -99,6 +99,7 @@ def run_bot(bot_id):
         "openai_api_key": bot.get("openai_api_key"),
         "newsapi_key": bot.get("newsapi_key"),
         "max_posts_per_run": bot.get("max_posts_per_run", 5),
+        "custom_feeds": bot.get("custom_feeds"),
     }
 
     start = time.time()
