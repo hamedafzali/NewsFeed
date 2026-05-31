@@ -456,6 +456,22 @@ class NewsProcessor:
         """Translate text to English if it's not already English."""
         if source_lang == "en" or not text:
             return text
+        libretranslate_url = self.config.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL")
+
+        # Try LibreTranslate first (local, no limits)
+        if libretranslate_url:
+            try:
+                resp = requests.post(
+                    f"{libretranslate_url.rstrip('/')}/translate",
+                    json={"q": text, "source": source_lang, "target": "en", "format": "text"},
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    return resp.json().get("translatedText", text)
+            except Exception as e:
+                self.logger.warning(f"LibreTranslate de→en failed: {e}")
+
+        # MyMemory fallback
         translated = self._translate_mymemory(text, source_lang, target="en")
         return translated if translated else text
 

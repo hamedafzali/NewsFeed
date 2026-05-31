@@ -41,7 +41,7 @@ services:
     ports:
       - "5005:5000"
     environment:
-      - LT_LOAD_ONLY=en,fa
+      - LT_LOAD_ONLY=en,fa,de
       - LT_DISABLE_WEB_UI=true
     volumes:
       - libretranslate-data:/home/libretranslate/.local
