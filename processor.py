@@ -378,21 +378,14 @@ class NewsProcessor:
                     )
                     content_block = f"Content:\n{content[:3000]}"
                 elif quality == QUALITY_RSS:
-                    # RSS snippet: skip LLM, just translate directly (faster, quality is fine)
+                    # RSS snippet: skip LLM, just translate directly (faster)
                     summary_en = content
                     summary_fa = self._translate_to_persian(content, libretranslate_url, source_lang)
                     return {"summary_en": summary_en, "summary_fa": summary_fa}
                 else:
-                    # Title only — use LLM background knowledge to expand the headline.
-                    # Do NOT invent specific facts (dates, names, numbers) not in the headline.
-                    instruction = (
-                        "You only have a news headline. Using your background knowledge "
-                        "about this topic, write 2-3 sentences that explain what this "
-                        "news is about — who is involved, what happened, and why it matters. "
-                        "Only state things you are confident are true. "
-                        "If the topic is unfamiliar, just describe what the headline implies."
-                    )
-                    content_block = ""
+                    # Title only: no LLM, just translate the title (fast)
+                    summary_fa = self._translate_to_persian(content, libretranslate_url, source_lang)
+                    return {"summary_en": content, "summary_fa": summary_fa}
 
                 user_msg = f"Publisher: {source}\nTitle: {title}"
                 if content_block:
@@ -415,8 +408,14 @@ class NewsProcessor:
                     max_tokens=400, temperature=0.3,
                 )
                 raw = response.choices[0].message.content.strip()
-                # Strip markdown code fences if the model wraps output
+                # Strip markdown code fences
                 raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+                # Fix trailing commas (common qwen output issue)
+                raw = re.sub(r",\s*([}\]])", r"\1", raw)
+                # Extract first JSON object if model added extra text
+                m = re.search(r'\{.*\}', raw, re.DOTALL)
+                if m:
+                    raw = m.group(0)
                 return json.loads(raw)
             except Exception as e:
                 self.logger.error(f"LLM summarise+translate failed: {e}")
