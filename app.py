@@ -221,6 +221,10 @@ def create_app():
                     content, article["title"], article.get("source", ""), quality,
                     source_lang=article.get("feed_language", "en"),
                 )
+                image_url = article.get("image_url")
+                if not image_url and not skip_scraping:
+                    image_url = processor._fetch_og_image(article["url"])
+
                 return {
                     "title": article["title"],
                     "url": article["url"],
@@ -230,6 +234,7 @@ def create_app():
                     "content_quality": quality,
                     "summary_en": summaries["summary_en"] if summaries else None,
                     "summary_fa": summaries["summary_fa"] if summaries else None,
+                    "image_url": image_url,
                     "sentiment": None,
                     "sentiment_score": None,
                 }

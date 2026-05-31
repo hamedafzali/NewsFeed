@@ -699,22 +699,32 @@ async function runPreview() {
       title_only:      '<span class="badge bg-warning-subtle text-warning me-1">🔖 title only</span>',
     }[q] || '');
 
+    const srcColor = s => { let h=0; for(let c of (s||'?')) h=(h*31+c.charCodeAt(0))&0xffffff; return '#'+h.toString(16).padStart(6,'0').slice(0,6); };
+    const imgOrPlaceholder = a => a.image_url
+      ? `<img src="${a.image_url}" alt="" style="width:90px;height:68px;object-fit:cover;border-radius:8px;flex-shrink:0" onerror="this.style.display='none'">`
+      : `<div style="width:90px;height:68px;border-radius:8px;flex-shrink:0;background:${srcColor(a.source)};display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.5rem;font-weight:700">${(a.source||'?')[0].toUpperCase()}</div>`;
+
     const cards = res.articles.map(a => `
       <div class="article-card">
-        <div class="d-flex justify-content-between align-items-start mb-1">
-          <a href="${a.url}" target="_blank" class="fw-semibold text-decoration-none">${a.title}</a>
-          <div class="d-flex gap-1 ms-2 flex-shrink-0 flex-wrap justify-content-end">
-            <span class="badge bg-primary bg-opacity-25 text-primary badge-relevance">${(a.relevance_score*100).toFixed(0)}%</span>
-            ${sentimentBadge(a.sentiment)}
+        <div class="d-flex gap-3">
+          ${imgOrPlaceholder(a)}
+          <div class="flex-grow-1 min-width-0">
+            <div class="d-flex justify-content-between align-items-start mb-1">
+              <a href="${a.url}" target="_blank" class="fw-semibold text-decoration-none">${a.title}</a>
+              <div class="d-flex gap-1 ms-2 flex-shrink-0">
+                <span class="badge bg-primary bg-opacity-25 text-primary badge-relevance">${(a.relevance_score*100).toFixed(0)}%</span>
+                ${sentimentBadge(a.sentiment)}
+              </div>
+            </div>
+            <div class="d-flex gap-3 small text-muted mb-1">
+              <span><i class="bi bi-broadcast me-1"></i>${a.source || '—'}</span>
+              ${a.published_at ? `<span><i class="bi bi-calendar3 me-1"></i>${fmtTime(a.published_at)}</span>` : ''}
+              <span>${qualityBadge(a.content_quality)}</span>
+            </div>
+            ${a.summary_en && a.summary_en !== a.title ? `<div class="small text-muted mb-1">${a.summary_en}</div>` : ''}
+            ${a.summary_fa ? `<div class="summary-fa">${a.summary_fa}</div>` : ''}
           </div>
         </div>
-        <div class="d-flex gap-3 small text-muted mb-1">
-          <span><i class="bi bi-broadcast me-1"></i>${a.source || '—'}</span>
-          ${a.published_at ? `<span><i class="bi bi-calendar3 me-1"></i>${fmtTime(a.published_at)}</span>` : ''}
-          <span class="ms-auto">${qualityBadge(a.content_quality)}</span>
-        </div>
-        ${a.summary_en && a.summary_en !== a.title ? `<div class="small text-muted mb-1">${a.summary_en}</div>` : ''}
-        ${a.summary_fa ? `<div class="summary-fa">${a.summary_fa}</div>` : ''}
       </div>`).join('');
 
     document.getElementById('preview-results').innerHTML = meta + (cards || '<div class="empty-state"><i class="bi bi-search"></i>No relevant articles found</div>');

@@ -198,6 +198,22 @@ class NewsProcessor:
                 source_href = entry.get("source", {}).get("href", "")
                 publisher = entry.get("source", {}).get("title", "") or feed.feed.get("title", "")
 
+                # Extract image from RSS media fields or summary HTML
+                image_url = None
+                if entry.get("media_content"):
+                    image_url = entry.media_content[0].get("url")
+                elif entry.get("media_thumbnail"):
+                    image_url = entry.media_thumbnail[0].get("url")
+                elif entry.get("enclosures"):
+                    for enc in entry.enclosures:
+                        if enc.get("type", "").startswith("image"):
+                            image_url = enc.get("href") or enc.get("url")
+                            break
+                if not image_url and rss_description:
+                    m = re.search(r'src=["\']([^"\']+\.(?:jpg|jpeg|png|webp|gif))', rss_description, re.I)
+                    if m:
+                        image_url = m.group(1)
+
                 articles.append({
                     "title": entry.get("title", ""),
                     "url": entry.get("link", ""),
@@ -208,6 +224,7 @@ class NewsProcessor:
                     "is_google_news": is_google_news,
                     "feed_language": feed_language,
                     "author": entry.get("author"),
+                    "image_url": image_url,
                 })
 
             with_desc = sum(1 for a in articles if a.get("rss_description"))
@@ -254,6 +271,22 @@ class NewsProcessor:
 
         # 3. Title only
         return article.get("title", ""), QUALITY_TITLE
+
+    def _fetch_og_image(self, url: str) -> Optional[str]:
+        """Fetch only the og:image meta tag from an article page — fast, lightweight."""
+        if not url or "news.google.com" in url:
+            return None
+        try:
+            resp = requests.get(url, timeout=5, headers={"User-Agent": USER_AGENT}, stream=True)
+            # Read only first 8KB to find og:image without downloading the whole page
+            chunk = resp.raw.read(8192).decode("utf-8", errors="ignore")
+            resp.close()
+            m = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', chunk, re.I)
+            if not m:
+                m = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', chunk, re.I)
+            return m.group(1) if m else None
+        except Exception:
+            return None
 
     def _scrape_article(self, url: str) -> Optional[str]:
         """Fetch and parse article body with browser headers."""
