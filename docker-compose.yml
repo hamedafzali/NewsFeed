@@ -48,7 +48,7 @@ services:
       - libretranslate-data:/home/libretranslate/.local
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:5000/languages | grep -q 'Persian' || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; data=urllib.request.urlopen('http://localhost:5000/languages').read().decode(); exit(0 if 'Persian' in data else 1)\""]
       interval: 30s
       timeout: 15s
       retries: 5
