@@ -259,7 +259,7 @@ class NewsProcessor:
         """Fetch and parse article body with browser headers."""
         try:
             resp = requests.get(
-                url, timeout=12,
+                url, timeout=6,
                 headers={"User-Agent": USER_AGENT},
             )
             if resp.status_code != 200:

@@ -205,29 +205,19 @@ def create_app():
             processor = NewsProcessor(config)
             raw_articles = processor._fetch_articles()
 
-            results = []
-            for article in raw_articles:
-                if len(results) >= max_results:
-                    break
-
-                # Content quality chain: full article > RSS description > title
+            def process_one(article):
                 content, quality = processor._extract_content_with_quality(article)
-
-                # Relevance check
                 if article.get("_bypass_relevance"):
                     score = 1.0
                 else:
                     score = processor._calculate_relevance(article["title"], content)
                     if score < 0.3:
-                        continue
-
-                # Summarise + translate in one LLM call (quality-aware prompt)
+                        return None
                 summaries = processor._summarize_and_translate(
                     content, article["title"], article.get("source", ""), quality,
                     source_lang=article.get("feed_language", "en"),
                 )
-
-                results.append({
+                return {
                     "title": article["title"],
                     "url": article["url"],
                     "source": article.get("source"),
@@ -238,7 +228,16 @@ def create_app():
                     "summary_fa": summaries["summary_fa"] if summaries else None,
                     "sentiment": None,
                     "sentiment_score": None,
-                })
+                }
+
+            results = []
+            candidates = raw_articles[:max_results * 4]  # check 4× candidates in parallel
+            with ThreadPoolExecutor(max_workers=min(len(candidates), 4)) as pool:
+                for item in pool.map(process_one, candidates):
+                    if item is not None:
+                        results.append(item)
+                    if len(results) >= max_results:
+                        break
 
             # Batch sentiment via FinBERT — single call for all articles
             if finbert_url and results:
