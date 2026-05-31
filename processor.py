@@ -172,6 +172,7 @@ class NewsProcessor:
                 country=self.config.get("country_code", ""),
             )
             feed = feedparser.parse(resolved_url)
+            is_google_news = "news.google.com" in resolved_url
             articles = []
             for entry in feed.entries[:25]:
                 rss_description = None
@@ -186,14 +187,24 @@ class NewsProcessor:
                 if not rss_description:
                     raw = entry.get("summary") or entry.get("description") or ""
                     if raw:
-                        rss_description = _clean_html(raw)
+                        cleaned = _clean_html(raw)
+                        # Google News summary is just the title repeated — discard it
+                        title = entry.get("title", "")
+                        if not is_google_news or (cleaned and cleaned not in title):
+                            rss_description = cleaned
+
+                # For Google News, capture publisher domain as extra context for LLM
+                source_href = entry.get("source", {}).get("href", "")
+                publisher = entry.get("source", {}).get("title", "") or feed.feed.get("title", "")
 
                 articles.append({
                     "title": entry.get("title", ""),
                     "url": entry.get("link", ""),
-                    "source": feed.feed.get("title", feed_url),
+                    "source": publisher,
+                    "source_href": source_href,
                     "published_at": entry.get("published"),
                     "rss_description": rss_description,
+                    "is_google_news": is_google_news,
                     "author": entry.get("author"),
                 })
 
@@ -222,15 +233,17 @@ class NewsProcessor:
     def _extract_content_with_quality(self, article: Dict[str, Any]) -> Tuple[str, str]:
         """
         Return (content, quality) using the best available source:
-          full_article   — scraped body ≥ 300 chars
+          full_article    — scraped body ≥ 300 chars
           rss_description — description from the RSS feed
-          title_only     — nothing but the headline
+          title_only      — nothing but the headline (LLM will expand using its knowledge)
         """
-        # 1. Try to scrape full article (resolve redirects first)
-        real_url = self._resolve_url(article["url"])
-        scraped = self._scrape_article(real_url)
-        if scraped and len(scraped) >= 300:
-            return scraped, QUALITY_FULL
+        # 1. Try to scrape full article.
+        #    Skip Google News URLs entirely — from EU servers they always hit GDPR consent.
+        if not article.get("is_google_news"):
+            real_url = self._resolve_url(article["url"])
+            scraped = self._scrape_article(real_url)
+            if scraped and len(scraped) >= 300:
+                return scraped, QUALITY_FULL
 
         # 2. RSS description
         rss_desc = (article.get("rss_description") or "").strip()
@@ -357,16 +370,28 @@ class NewsProcessor:
                         "Summarise this news article in 3 concise sentences. "
                         "Cover: what happened, who is involved, and why it matters."
                     )
+                    content_block = f"Content:\n{content[:3000]}"
                 elif quality == QUALITY_RSS:
                     instruction = (
                         "Based on this news snippet, write a 2-sentence summary: "
                         "what happened and who is involved."
                     )
+                    content_block = f"Snippet:\n{content[:1000]}"
                 else:
+                    # Title only — use LLM background knowledge to expand the headline.
+                    # Do NOT invent specific facts (dates, names, numbers) not in the headline.
                     instruction = (
-                        "This is a headline only. "
-                        "Write 1 sentence describing what this news item is about."
+                        "You only have a news headline. Using your background knowledge "
+                        "about this topic, write 2-3 sentences that explain what this "
+                        "news is about — who is involved, what happened, and why it matters. "
+                        "Only state things you are confident are true. "
+                        "If the topic is unfamiliar, just describe what the headline implies."
                     )
+                    content_block = ""
+
+                user_msg = f"Publisher: {source}\nTitle: {title}"
+                if content_block:
+                    user_msg += f"\n\n{content_block}"
 
                 response = self.openai_client.chat.completions.create(
                     model=self.model,
@@ -380,10 +405,7 @@ class NewsProcessor:
                                 "'summary_fa' (Persian translation of the summary)."
                             ),
                         },
-                        {
-                            "role": "user",
-                            "content": f"Source: {source}\nTitle: {title}\n\nContent:\n{content[:3000]}",
-                        },
+                        {"role": "user", "content": user_msg},
                     ],
                     max_tokens=400, temperature=0.3,
                 )
