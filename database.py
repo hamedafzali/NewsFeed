@@ -17,6 +17,18 @@ def _conn():
     return c
 
 
+def _migrate(c):
+    """Apply schema migrations safely on existing databases."""
+    migrations = [
+        "ALTER TABLE global_feeds ADD COLUMN bypass_relevance INTEGER NOT NULL DEFAULT 0",
+    ]
+    for sql in migrations:
+        try:
+            c.execute(sql)
+        except Exception:
+            pass  # Column already exists
+
+
 def init_db():
     with _conn() as c:
         c.executescript("""
@@ -74,6 +86,7 @@ def init_db():
                 FOREIGN KEY (bot_id) REFERENCES bots(id) ON DELETE SET NULL
             );
         """)
+        _migrate(c)
 
 
 # --- Bots ---
