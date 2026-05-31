@@ -173,7 +173,14 @@ def create_app():
                 score = processor._calculate_relevance(article["title"], text_for_relevance)
                 if score < 0.3:
                     continue
-                summaries = processor._summarize_and_translate(content) if content else None
+                libretranslate_url = config.get("libretranslate_url")
+                if content:
+                    summaries = processor._summarize_and_translate(content)
+                else:
+                    # No content — translate the title at minimum
+                    title_fa = processor._translate_to_persian(article["title"], libretranslate_url)
+                    summaries = {"summary_en": article["title"], "summary_fa": title_fa}
+
                 results.append({
                     "title": article["title"],
                     "url": article["url"],
