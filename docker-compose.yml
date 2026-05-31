@@ -21,6 +21,7 @@ services:
       - OLLAMA_MODEL=qwen2.5:1.5b
     volumes:
       - ./data:/app/data
+      - ./templates:/app/templates
     depends_on:
       libretranslate:
         condition: service_healthy
