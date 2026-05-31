@@ -16,6 +16,26 @@ import database as db
 from panel import panel as panel_blueprint
 from service import NewsFeedService
 
+
+def _build_sources(body: dict) -> list:
+    """Build the sources list from global feeds only. No hardcoded sources."""
+    city = body.get("city_name", "")
+    language = body.get("news_language", "en")
+    country = body.get("country_code", "")
+
+    sources = []
+    for f in db.get_global_feeds(active_only=True):
+        sources.append({
+            "url": f["url"],
+            "bypass_relevance": bool(f.get("bypass_relevance")),
+        })
+
+    # Per-request extra feeds (passed directly in the request body)
+    for url in body.get("custom_feeds", []):
+        sources.append({"url": url, "bypass_relevance": False})
+
+    return sources
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -34,6 +54,19 @@ def _require_api_key(f):
                 return jsonify({"error": "Unauthorized"}), 401
         return f(*args, **kwargs)
     return decorated
+
+
+def _build_sources(body: dict) -> list:
+    """Build ordered source list from global feeds + any per-request overrides."""
+    sources = []
+    # Global feeds from DB (ordered, active only)
+    for f in db.get_global_feeds(active_only=True):
+        sources.append({"url": f["url"], "bypass_relevance": bool(f["bypass_relevance"])})
+    # Per-request custom feeds (always bypass relevance since caller chose them explicitly)
+    for url in body.get("custom_feeds", []):
+        if url not in {s["url"] for s in sources}:
+            sources.append({"url": url, "bypass_relevance": False})
+    return sources
 
 
 def create_app():
@@ -161,8 +194,7 @@ def create_app():
             "model": body.get("model", "gpt-4o-mini"),
             "newsapi_key": body.get("newsapi_key"),
             "libretranslate_url": body.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL"),
-            "custom_feeds": body.get("custom_feeds", []) + [f["url"] for f in db.get_global_feeds(active_only=True) if not f["bypass_relevance"]],
-            "unfiltered_feeds": [f["url"] for f in db.get_global_feeds(active_only=True) if f["bypass_relevance"]],
+            "sources": _build_sources(body),
             "max_posts_per_run": max_results,
         }
         finbert_url = body.get("finbert_url")

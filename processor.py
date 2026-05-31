@@ -115,45 +115,21 @@ class NewsProcessor:
             result.duration = (datetime.now() - start_time).total_seconds()
         return result
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def _fetch_articles(self) -> List[Dict[str, Any]]:
         articles = []
         city = self.config["city_name"]
         lang = self.config["news_language"]
         country = self.config["country_code"]
 
-        # Google News RSS
-        rss_url = f"https://news.google.com/rss/search?q={city}&hl={lang}&gl={country}"
-        feed = feedparser.parse(rss_url)
-        for entry in feed.entries[:20]:
-            articles.append({
-                "title": entry.title,
-                "url": entry.link,
-                "source": entry.get("source", {}).get("title", "Unknown"),
-                "published_at": entry.get("published"),
-            })
-
-        # Custom RSS feeds
-        custom_feeds = self.config.get("custom_feeds") or []
-        if isinstance(custom_feeds, str):
-            # Accept newline or comma separated strings
-            custom_feeds = [f.strip() for f in custom_feeds.replace(",", "\n").splitlines() if f.strip()]
-        for feed_url in custom_feeds:
-            articles.extend(self._fetch_from_rss(feed_url))
-
-        # NewsAPI
-        newsapi_key = self.config.get("newsapi_key", "")
-        if newsapi_key and newsapi_key != "your_newsapi_key_here":
-            articles.extend(self._fetch_from_newsapi())
-
-        # Unfiltered feeds — bypass relevance, mark them so caller can skip scoring
-        unfiltered_feeds = self.config.get("unfiltered_feeds") or []
-        if isinstance(unfiltered_feeds, str):
-            unfiltered_feeds = [f.strip() for f in unfiltered_feeds.replace(",", "\n").splitlines() if f.strip()]
-        for feed_url in unfiltered_feeds:
-            for a in self._fetch_from_rss(feed_url):
-                a["_bypass_relevance"] = True
-                articles.append(a)
+        # All sources come from the global feeds list — nothing is hardcoded.
+        # Each feed entry has: url, bypass_relevance
+        sources = self.config.get("sources") or []
+        for source in sources:
+            feed_articles = self._fetch_from_rss(source["url"])
+            if source.get("bypass_relevance"):
+                for a in feed_articles:
+                    a["_bypass_relevance"] = True
+            articles.extend(feed_articles)
 
         # Deduplicate by URL
         seen = set()
@@ -163,13 +139,18 @@ class NewsProcessor:
                 seen.add(a["url"])
                 unique.append(a)
 
-        self.logger.info(f"Fetched {len(unique)} articles ({len(custom_feeds)} custom, {len(unfiltered_feeds)} unfiltered feeds)")
+        self.logger.info(f"Fetched {len(unique)} articles from {len(sources)} sources")
         return unique
 
     def _fetch_from_rss(self, feed_url: str) -> List[Dict[str, Any]]:
-        """Fetch articles from any RSS/Atom feed URL."""
+        """Fetch articles from any RSS/Atom feed URL. Supports {city}, {language}, {country} placeholders."""
         try:
-            feed = feedparser.parse(feed_url)
+            resolved_url = feed_url.format(
+                city=self.config.get("city_name", ""),
+                language=self.config.get("news_language", "en"),
+                country=self.config.get("country_code", ""),
+            )
+            feed = feedparser.parse(resolved_url)
             articles = []
             for entry in feed.entries[:20]:
                 articles.append({
@@ -178,7 +159,7 @@ class NewsProcessor:
                     "source": feed.feed.get("title", feed_url),
                     "published_at": entry.get("published"),
                 })
-            self.logger.info(f"Fetched {len(articles)} articles from {feed_url}")
+            self.logger.info(f"Fetched {len(articles)} from {resolved_url}")
             return articles
         except Exception as e:
             self.logger.warning(f"Failed to fetch RSS {feed_url}: {e}")

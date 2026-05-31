@@ -160,7 +160,6 @@
         <div class="col-md-2"><label class="form-label small fw-semibold">Language</label><input type="text" class="form-control" id="prev-lang" placeholder="en" value="en" maxlength="5"></div>
         <div class="col-md-2"><label class="form-label small fw-semibold">Max Results</label><input type="number" class="form-control" id="prev-max" value="5" min="1" max="20"></div>
         <div class="col-md-3"><label class="form-label small fw-semibold">OpenAI Key (optional)</label><input type="password" class="form-control" id="prev-openai" placeholder="sk-..."></div>
-        <div class="col-12"><label class="form-label small fw-semibold">Custom RSS Feeds (optional, one per line)</label><textarea class="form-control font-monospace" id="prev-feeds" rows="3" placeholder="https://rss.dw.com/rdf/rss-en-all&#10;https://feeds.bbci.co.uk/news/rss.xml"></textarea></div>
       </div>
       <div class="mt-3">
         <button class="btn btn-primary" id="preview-btn" onclick="runPreview()"><i class="bi bi-search me-1"></i>Fetch News</button>
@@ -194,14 +193,15 @@
     <div class="card stat-card mb-4 p-3">
       <div class="fw-semibold mb-3">Quick Add — Popular Sources</div>
       <div class="row g-2" id="quick-feeds">
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('DW English','https://rss.dw.com/rdf/rss-en-all')">+ DW English</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('BBC World','https://feeds.bbci.co.uk/news/world/rss.xml')">+ BBC World</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Reuters','https://feeds.reuters.com/reuters/topNews')">+ Reuters</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Al Jazeera','https://www.aljazeera.com/xml/rss/all.xml')">+ Al Jazeera</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('SWR Nachrichten','https://www.swr.de/nachrichten/rss/feed-nachrichten-alle.xml')">+ SWR</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Tagblatt Tübingen','https://www.tagblatt.de/rss/feed/')">+ Tagblatt Tübingen</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Guardian World','https://www.theguardian.com/world/rss')">+ Guardian</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('NPR News','https://feeds.npr.org/1001/rss.xml')">+ NPR</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Google News','https://news.google.com/rss/search?q={city}&hl={language}&gl={country}',0)">+ Google News</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('DW English','https://rss.dw.com/rdf/rss-en-all',1)">+ DW English</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('BBC World','https://feeds.bbci.co.uk/news/world/rss.xml',1)">+ BBC World</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Reuters','https://feeds.reuters.com/reuters/topNews',1)">+ Reuters</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Al Jazeera','https://www.aljazeera.com/xml/rss/all.xml',1)">+ Al Jazeera</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('SWR Nachrichten','https://www.swr.de/nachrichten/rss/feed-nachrichten-alle.xml',1)">+ SWR</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Tagblatt Tübingen','https://www.tagblatt.de/rss/feed/',0)">+ Tagblatt Tübingen</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Guardian World','https://www.theguardian.com/world/rss',1)">+ Guardian</button></div>
+        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('NPR News','https://feeds.npr.org/1001/rss.xml',1)">+ NPR</button></div>
       </div>
     </div>
 
@@ -583,8 +583,6 @@ async function runPreview() {
   };
   const openai = document.getElementById('prev-openai').value;
   if (openai) body.openai_api_key = openai;
-  const feeds = document.getElementById('prev-feeds').value.trim();
-  if (feeds) body.custom_feeds = feeds.split('\n').map(s => s.trim()).filter(Boolean);
 
   try {
     const res = await api('/api/news', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -699,11 +697,16 @@ async function toggleFeed(id, field, val) {
   await api(`/panel/api/feeds/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ [field]: val ? 1 : 0 }) });
 }
 
-async function quickAdd(name, url) {
-  const res = await api('/panel/api/feeds', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, url }) });
+async function quickAdd(name, url, bypass = 0) {
+  const res = await api('/panel/api/feeds', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, url, bypass_relevance: bypass }) });
   if (res.error) { toast('Already added or error: ' + res.error, 'error'); return; }
   toast(`${name} added`);
   loadFeeds();
+}
+
+async function saveAppSetting(key, value) {
+  await api('/panel/api/settings/app', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ [key]: value ? '1' : '0' }) });
+  toast(key === 'use_google_news' ? (value ? 'Google News enabled' : 'Google News disabled') : 'Setting saved');
 }
 
 // Init

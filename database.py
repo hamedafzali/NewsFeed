@@ -20,6 +20,11 @@ def _conn():
 def init_db():
     with _conn() as c:
         c.executescript("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS bots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -255,3 +260,22 @@ def update_global_feed(feed_id: int, name: str = None, url: str = None,
 def delete_global_feed(feed_id: int):
     with _conn() as c:
         c.execute("DELETE FROM global_feeds WHERE id = ?", (feed_id,))
+
+
+# --- Settings ---
+
+def get_setting(key: str, default: str = None) -> Optional[str]:
+    with _conn() as c:
+        row = c.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else default
+
+
+def set_setting(key: str, value: str):
+    with _conn() as c:
+        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+
+def get_all_settings() -> Dict[str, str]:
+    with _conn() as c:
+        rows = c.execute("SELECT key, value FROM settings").fetchall()
+        return {r[0]: r[1] for r in rows}

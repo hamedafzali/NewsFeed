@@ -8,6 +8,22 @@ from flask import Blueprint, jsonify, request, render_template, current_app
 import database as db
 from processor import NewsProcessor
 
+
+def _build_bot_sources(bot: dict) -> list:
+    """Global feeds + bot's own custom feeds."""
+    sources = []
+    for f in db.get_global_feeds(active_only=True):
+        sources.append({"url": f["url"], "bypass_relevance": bool(f.get("bypass_relevance"))})
+    for url in _parse_feeds(bot.get("custom_feeds", "")):
+        sources.append({"url": url, "bypass_relevance": False})
+    return sources
+
+
+def _parse_feeds(raw: str) -> list:
+    if not raw:
+        return []
+    return [u.strip() for u in raw.replace(",", "\n").splitlines() if u.strip()]
+
 panel = Blueprint("panel", __name__, url_prefix="/panel")
 
 
@@ -97,9 +113,8 @@ def run_bot(bot_id):
         "country_code": bot["country_code"],
         "news_language": bot.get("news_language", "en"),
         "openai_api_key": bot.get("openai_api_key"),
-        "newsapi_key": bot.get("newsapi_key"),
         "max_posts_per_run": bot.get("max_posts_per_run", 5),
-        "custom_feeds": bot.get("custom_feeds"),
+        "sources": _build_bot_sources(bot),
     }
 
     start = time.time()
@@ -211,6 +226,19 @@ def delete_feed(feed_id):
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
+
+@panel.route("/api/settings/app", methods=["GET"])
+def get_app_settings():
+    return jsonify(db.get_all_settings())
+
+
+@panel.route("/api/settings/app", methods=["POST"])
+def save_app_settings():
+    data = request.get_json() or {}
+    for key, value in data.items():
+        db.set_setting(key, str(value))
+    return jsonify({"message": "Saved"})
+
 
 @panel.route("/api/settings")
 def settings():
