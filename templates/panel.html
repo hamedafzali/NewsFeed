@@ -165,6 +165,23 @@
         <button class="btn btn-primary" id="preview-btn" onclick="runPreview()"><i class="bi bi-search me-1"></i>Fetch News</button>
       </div>
     </div>
+
+    <div id="preview-progress" class="d-none mb-3">
+      <div class="card stat-card p-3">
+        <div class="d-flex align-items-center gap-3">
+          <div class="spinner-border text-primary spinner-sm flex-shrink-0"></div>
+          <div class="flex-grow-1">
+            <div class="fw-semibold" id="progress-step">Fetching RSS feeds…</div>
+            <div class="text-muted small" id="progress-detail">Connecting to sources</div>
+          </div>
+          <div class="text-muted font-monospace" id="progress-timer">0s</div>
+        </div>
+        <div class="progress mt-2" style="height:4px">
+          <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" id="progress-bar" style="width:5%"></div>
+        </div>
+      </div>
+    </div>
+
     <div id="preview-results"></div>
   </div>
 
@@ -622,6 +639,34 @@ async function runPreview() {
   btn.innerHTML = '<span class="spinner-border spinner-sm me-1"></span>Fetching...';
   document.getElementById('preview-results').innerHTML = '';
 
+  // Show progress panel
+  const progressEl = document.getElementById('preview-progress');
+  const stepEl = document.getElementById('progress-step');
+  const detailEl = document.getElementById('progress-detail');
+  const timerEl = document.getElementById('progress-timer');
+  const barEl = document.getElementById('progress-bar');
+  progressEl.classList.remove('d-none');
+
+  const startTime = Date.now();
+  const steps = [
+    [0,  5,  'Fetching RSS feeds…',         'Connecting to sources'],
+    [4,  20, 'Extracting article content…',  'Resolving URLs and scraping pages'],
+    [10, 45, 'Checking relevance…',          'Filtering articles for your city'],
+    [20, 70, 'Summarising with AI…',         'Ollama is generating summaries'],
+    [40, 85, 'Translating to Persian…',      'MyMemory / LibreTranslate running'],
+    [60, 95, 'Almost done…',                 'Finalising results'],
+  ];
+  let stepIdx = 0;
+  const ticker = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    timerEl.textContent = elapsed + 's';
+    while (stepIdx < steps.length - 1 && elapsed >= steps[stepIdx + 1][0]) stepIdx++;
+    const [, pct, step, detail] = steps[stepIdx];
+    stepEl.textContent = step;
+    detailEl.textContent = detail;
+    barEl.style.width = pct + '%';
+  }, 500);
+
   const body = {
     city_name: document.getElementById('prev-city').value,
     country_code: document.getElementById('prev-country').value.toUpperCase(),
@@ -631,13 +676,19 @@ async function runPreview() {
   const openai = document.getElementById('prev-openai').value;
   if (openai) body.openai_api_key = openai;
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120000); // 2 min timeout
-    const res = await fetch('/api/news', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body), signal: controller.signal })
-      .then(r => r.json()).finally(() => clearTimeout(timeout));
+  const stopProgress = () => {
+    clearInterval(ticker);
+    progressEl.classList.add('d-none');
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-search me-1"></i>Fetch News';
+  };
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
+    const res = await fetch('/api/news', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body), signal: controller.signal })
+      .then(r => r.json()).finally(() => clearTimeout(timeout));
+    stopProgress();
 
     if (res.error) { document.getElementById('preview-results').innerHTML = `<div class="alert alert-danger">${res.error}</div>`; return; }
 
@@ -665,8 +716,7 @@ async function runPreview() {
 
     document.getElementById('preview-results').innerHTML = meta + (cards || '<div class="empty-state"><i class="bi bi-search"></i>No relevant articles found</div>');
   } catch(e) {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-search me-1"></i>Fetch News';
+    stopProgress();
     document.getElementById('preview-results').innerHTML = `<div class="alert alert-danger">Request failed: ${e.message}</div>`;
   }
 }
