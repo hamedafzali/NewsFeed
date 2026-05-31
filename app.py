@@ -7,9 +7,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from functools import wraps
 
+import time
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, jsonify, request
 
+import database as db
+from panel import panel as panel_blueprint
 from service import NewsFeedService
 
 logging.basicConfig(
@@ -35,6 +39,9 @@ def _require_api_key(f):
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "news-feed-service-secret-key")
+
+    db.init_db()
+    app.register_blueprint(panel_blueprint)
 
     bot_manager_url = os.getenv("BOT_MANAGER_URL", "http://localhost:5002")
     service_id = os.getenv("SERVICE_ID", "news-feed-1")
@@ -160,6 +167,7 @@ def create_app():
 
         from processor import NewsProcessor
         try:
+            t0 = time.time()
             processor = NewsProcessor(config)
             raw_articles = processor._fetch_articles()
 
@@ -203,6 +211,8 @@ def create_app():
                         article["sentiment"] = sentiment_map[key]["label"]
                         article["sentiment_score"] = sentiment_map[key]["score"]
 
+            duration_ms = int((time.time() - t0) * 1000)
+            db.log_activity(body["city_name"], "api", len(raw_articles), len(results), duration_ms)
             return jsonify({
                 "city": body["city_name"],
                 "fetched": len(raw_articles),
@@ -210,6 +220,7 @@ def create_app():
                 "articles": results,
             })
         except Exception as e:
+            db.log_activity(body.get("city_name", "?"), "api", 0, 0, 0, str(e))
             return jsonify({"error": str(e)}), 500
 
     # --- Direct processing (no Bot Manager needed) ---

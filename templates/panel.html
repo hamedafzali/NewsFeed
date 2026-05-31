@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NewsFeed Panel</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<style>
+  :root { --sidebar-w: 240px; --sidebar-bg: #1a1a2e; --sidebar-active: #0f3460; }
+  body { background: #f0f2f5; min-height: 100vh; }
+  #sidebar {
+    width: var(--sidebar-w); min-height: 100vh; background: var(--sidebar-bg);
+    position: fixed; top: 0; left: 0; z-index: 100; display: flex; flex-direction: column;
+  }
+  #sidebar .brand { padding: 1.5rem 1.25rem; border-bottom: 1px solid #ffffff15; }
+  #sidebar .brand h5 { color: #fff; margin: 0; font-weight: 700; }
+  #sidebar .brand small { color: #a0a8c0; font-size: .75rem; }
+  #sidebar .nav-link {
+    color: #a0a8c0; padding: .65rem 1.25rem; border-radius: 8px; margin: 2px 8px;
+    display: flex; align-items: center; gap: .6rem; font-size: .875rem;
+    transition: all .15s;
+  }
+  #sidebar .nav-link:hover { color: #fff; background: rgba(255,255,255,.08); }
+  #sidebar .nav-link.active { color: #fff; background: var(--sidebar-active); }
+  #sidebar .nav-link i { font-size: 1rem; }
+  #main { margin-left: var(--sidebar-w); padding: 1.5rem; }
+  .page { display: none; }
+  .page.active { display: block; }
+  .stat-card { border: none; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.07); }
+  .stat-card .icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; }
+  .badge-relevance { font-size: .7rem; }
+  .table th { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; }
+  .empty-state { text-align: center; padding: 3rem; color: #adb5bd; }
+  .empty-state i { font-size: 3rem; display: block; margin-bottom: .75rem; }
+  .spinner-sm { width: 1rem; height: 1rem; }
+  .sentiment-positive { color: #198754; }
+  .sentiment-negative { color: #dc3545; }
+  .sentiment-neutral { color: #6c757d; }
+  .bot-card { border: none; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.07); transition: transform .15s; }
+  .bot-card:hover { transform: translateY(-2px); }
+  #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; }
+  .article-card { border: 1px solid #e9ecef; border-radius: 10px; padding: 1rem; margin-bottom: .75rem; }
+  .article-card .summary-fa { direction: rtl; font-size: .9rem; color: #495057; background: #f8f9fa; padding: .5rem .75rem; border-radius: 6px; margin-top: .5rem; }
+  @media (max-width: 768px) {
+    #sidebar { width: 60px; }
+    #sidebar .brand h5, #sidebar .brand small, #sidebar .nav-link span { display: none; }
+    #main { margin-left: 60px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav id="sidebar">
+  <div class="brand">
+    <h5><i class="bi bi-newspaper me-2"></i>NewsFeed</h5>
+    <small>Management Panel</small>
+  </div>
+  <ul class="nav flex-column mt-2 flex-grow-1">
+    <li class="nav-item"><a class="nav-link active" href="#" data-page="dashboard"><i class="bi bi-grid-1x2"></i><span>Dashboard</span></a></li>
+    <li class="nav-item"><a class="nav-link" href="#" data-page="bots"><i class="bi bi-robot"></i><span>News Bots</span></a></li>
+    <li class="nav-item"><a class="nav-link" href="#" data-page="activity"><i class="bi bi-activity"></i><span>Activity Log</span></a></li>
+    <li class="nav-item"><a class="nav-link" href="#" data-page="posts"><i class="bi bi-send-check"></i><span>Posted Articles</span></a></li>
+    <li class="nav-item"><a class="nav-link" href="#" data-page="preview"><i class="bi bi-search"></i><span>News Preview</span></a></li>
+    <li class="nav-item mt-auto"><a class="nav-link" href="#" data-page="settings"><i class="bi bi-gear"></i><span>Settings</span></a></li>
+  </ul>
+</nav>
+
+<!-- Main -->
+<main id="main">
+
+  <!-- Dashboard -->
+  <div class="page active" id="page-dashboard">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h4 class="fw-bold mb-0">Dashboard</h4>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadDashboard()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+    </div>
+    <div class="row g-3 mb-4" id="stat-cards">
+      <div class="col-6 col-lg-3"><div class="card stat-card p-3"><div class="d-flex align-items-center gap-3"><div class="icon bg-primary bg-opacity-10 text-primary"><i class="bi bi-robot"></i></div><div><div class="text-muted small">Active Bots</div><div class="fs-4 fw-bold" id="stat-bots">—</div></div></div></div></div>
+      <div class="col-6 col-lg-3"><div class="card stat-card p-3"><div class="d-flex align-items-center gap-3"><div class="icon bg-info bg-opacity-10 text-info"><i class="bi bi-cloud-download"></i></div><div><div class="text-muted small">Fetched Today</div><div class="fs-4 fw-bold" id="stat-fetched">—</div></div></div></div></div>
+      <div class="col-6 col-lg-3"><div class="card stat-card p-3"><div class="d-flex align-items-center gap-3"><div class="icon bg-success bg-opacity-10 text-success"><i class="bi bi-check2-circle"></i></div><div><div class="text-muted small">Returned Today</div><div class="fs-4 fw-bold" id="stat-returned">—</div></div></div></div></div>
+      <div class="col-6 col-lg-3"><div class="card stat-card p-3"><div class="d-flex align-items-center gap-3"><div class="icon bg-warning bg-opacity-10 text-warning"><i class="bi bi-send-check"></i></div><div><div class="text-muted small">Total Posts</div><div class="fs-4 fw-bold" id="stat-posts">—</div></div></div></div></div>
+    </div>
+    <div class="row g-3 mb-4">
+      <div class="col-12 col-lg-8">
+        <div class="card stat-card p-3">
+          <div class="fw-semibold mb-3">Activity (last 7 days)</div>
+          <canvas id="activity-chart" height="100"></canvas>
+        </div>
+      </div>
+      <div class="col-12 col-lg-4">
+        <div class="card stat-card p-3 h-100">
+          <div class="fw-semibold mb-3">Today's Summary</div>
+          <div id="today-summary" class="text-muted small">Loading...</div>
+        </div>
+      </div>
+    </div>
+    <div class="card stat-card">
+      <div class="card-header bg-white fw-semibold border-0 pt-3">Recent Activity</div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead><tr><th>Time</th><th>City</th><th>Source</th><th>Fetched</th><th>Returned</th><th>Duration</th><th>Status</th></tr></thead>
+            <tbody id="recent-activity"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bots -->
+  <div class="page" id="page-bots">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h4 class="fw-bold mb-0">News Bots</h4>
+      <button class="btn btn-primary btn-sm" onclick="openBotModal()"><i class="bi bi-plus-lg me-1"></i>Add Bot</button>
+    </div>
+    <div class="row g-3" id="bots-grid">
+      <div class="col-12 text-center py-5 text-muted"><div class="spinner-border spinner-sm"></div> Loading...</div>
+    </div>
+  </div>
+
+  <!-- Activity -->
+  <div class="page" id="page-activity">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h4 class="fw-bold mb-0">Activity Log</h4>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadActivity()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+    </div>
+    <div class="card stat-card">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead><tr><th>Time</th><th>City</th><th>Source</th><th>Fetched</th><th>Returned</th><th>Duration</th><th>Error</th></tr></thead>
+            <tbody id="activity-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Posts -->
+  <div class="page" id="page-posts">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h4 class="fw-bold mb-0">Posted Articles</h4>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadPosts()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+    </div>
+    <div id="posts-list">
+      <div class="text-center py-5 text-muted"><div class="spinner-border spinner-sm"></div> Loading...</div>
+    </div>
+  </div>
+
+  <!-- Preview -->
+  <div class="page" id="page-preview">
+    <h4 class="fw-bold mb-4">News Preview</h4>
+    <div class="card stat-card p-4 mb-4">
+      <div class="row g-3">
+        <div class="col-md-3"><label class="form-label small fw-semibold">City</label><input type="text" class="form-control" id="prev-city" placeholder="Tehran" value="Tehran"></div>
+        <div class="col-md-2"><label class="form-label small fw-semibold">Country Code</label><input type="text" class="form-control" id="prev-country" placeholder="IR" value="IR" maxlength="2"></div>
+        <div class="col-md-2"><label class="form-label small fw-semibold">Language</label><input type="text" class="form-control" id="prev-lang" placeholder="en" value="en" maxlength="5"></div>
+        <div class="col-md-2"><label class="form-label small fw-semibold">Max Results</label><input type="number" class="form-control" id="prev-max" value="5" min="1" max="20"></div>
+        <div class="col-md-3"><label class="form-label small fw-semibold">OpenAI Key (optional)</label><input type="password" class="form-control" id="prev-openai" placeholder="sk-..."></div>
+      </div>
+      <div class="mt-3">
+        <button class="btn btn-primary" id="preview-btn" onclick="runPreview()"><i class="bi bi-search me-1"></i>Fetch News</button>
+      </div>
+    </div>
+    <div id="preview-results"></div>
+  </div>
+
+  <!-- Settings -->
+  <div class="page" id="page-settings">
+    <h4 class="fw-bold mb-4">Settings</h4>
+    <div class="card stat-card p-4">
+      <h6 class="text-muted text-uppercase small fw-bold mb-3">Active Configuration</h6>
+      <div id="settings-list" class="row g-3"></div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Bot Modal -->
+<div class="modal fade" id="bot-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header border-0">
+        <h5 class="modal-title fw-bold" id="bot-modal-title">Add Bot</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="bot-id">
+        <div class="row g-3">
+          <div class="col-md-6"><label class="form-label small fw-semibold">Bot Name *</label><input type="text" class="form-control" id="bot-name" placeholder="Tehran News Bot"></div>
+          <div class="col-md-6"><label class="form-label small fw-semibold">City Name *</label><input type="text" class="form-control" id="bot-city" placeholder="Tehran"></div>
+          <div class="col-md-4"><label class="form-label small fw-semibold">Country Code *</label><input type="text" class="form-control" id="bot-country" placeholder="IR" maxlength="2"></div>
+          <div class="col-md-4"><label class="form-label small fw-semibold">Language</label><input type="text" class="form-control" id="bot-lang" placeholder="en" value="en"></div>
+          <div class="col-md-4"><label class="form-label small fw-semibold">Max Posts/Run</label><input type="number" class="form-control" id="bot-maxposts" value="5" min="1" max="20"></div>
+          <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">Telegram</h6></div>
+          <div class="col-md-7"><label class="form-label small fw-semibold">Bot Token *</label><input type="password" class="form-control" id="bot-token" placeholder="1234567890:ABC..."></div>
+          <div class="col-md-5"><label class="form-label small fw-semibold">Chat ID *</label><input type="text" class="form-control" id="bot-chatid" placeholder="-100123456789"></div>
+          <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">API Keys (optional)</h6></div>
+          <div class="col-md-6"><label class="form-label small fw-semibold">OpenAI API Key</label><input type="password" class="form-control" id="bot-openai" placeholder="sk-..."></div>
+          <div class="col-md-6"><label class="form-label small fw-semibold">NewsAPI Key</label><input type="password" class="form-control" id="bot-newsapi" placeholder="..."></div>
+          <div class="col-12 d-flex align-items-center gap-2">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="bot-active" checked>
+              <label class="form-check-label small" for="bot-active">Active</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-0">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveBot()"><i class="bi bi-check-lg me-1"></i>Save Bot</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Posts Modal -->
+<div class="modal fade" id="posts-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header border-0">
+        <h5 class="modal-title fw-bold" id="posts-modal-title">Posting History</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="posts-modal-body">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast-container"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ── Navigation ────────────────────────────────────────────────────────────────
+let activityChart = null;
+
+document.querySelectorAll('[data-page]').forEach(link => {
+  link.addEventListener('click', e => {
+    e.preventDefault();
+    const page = link.dataset.page;
+    document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+    link.classList.add('active');
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + page).classList.add('active');
+    if (page === 'dashboard') loadDashboard();
+    else if (page === 'bots') loadBots();
+    else if (page === 'activity') loadActivity();
+    else if (page === 'posts') loadPosts();
+    else if (page === 'settings') loadSettings();
+  });
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const api = (url, opts) => fetch(url, opts).then(r => r.json());
+
+function toast(msg, type = 'success') {
+  const id = 'toast-' + Date.now();
+  const icon = type === 'success' ? 'check-circle-fill' : 'exclamation-triangle-fill';
+  const color = type === 'success' ? 'text-success' : 'text-danger';
+  document.getElementById('toast-container').insertAdjacentHTML('beforeend', `
+    <div id="${id}" class="toast show align-items-center border-0 shadow mb-2" role="alert">
+      <div class="d-flex"><div class="toast-body"><i class="bi bi-${icon} ${color} me-2"></i>${msg}</div>
+      <button type="button" class="btn-close me-2 m-auto" onclick="document.getElementById('${id}').remove()"></button></div>
+    </div>`);
+  setTimeout(() => document.getElementById(id)?.remove(), 4000);
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleString();
+}
+
+function fmtDuration(ms) {
+  if (!ms) return '—';
+  return ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(1) + 's';
+}
+
+function sentimentBadge(s) {
+  if (!s) return '<span class="badge bg-secondary bg-opacity-25 text-secondary">—</span>';
+  const map = {positive: 'success', negative: 'danger', neutral: 'secondary'};
+  return `<span class="badge bg-${map[s] || 'secondary'} bg-opacity-25 text-${map[s] || 'secondary'}">${s}</span>`;
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  const [stats, chart, activity] = await Promise.all([
+    api('/panel/api/stats'),
+    api('/panel/api/activity/chart?days=7'),
+    api('/panel/api/activity?limit=8'),
+  ]);
+
+  document.getElementById('stat-bots').textContent = stats.active_bots ?? '0';
+  document.getElementById('stat-fetched').textContent = stats.fetched_today ?? '0';
+  document.getElementById('stat-returned').textContent = stats.returned_today ?? '0';
+  document.getElementById('stat-posts').textContent = stats.total_posts ?? '0';
+
+  document.getElementById('today-summary').innerHTML = `
+    <div class="d-flex justify-content-between py-2 border-bottom"><span>Total Bots</span><strong>${stats.total_bots}</strong></div>
+    <div class="d-flex justify-content-between py-2 border-bottom"><span>Active Bots</span><strong>${stats.active_bots}</strong></div>
+    <div class="d-flex justify-content-between py-2 border-bottom"><span>Fetched Today</span><strong>${stats.fetched_today}</strong></div>
+    <div class="d-flex justify-content-between py-2 border-bottom"><span>Returned Today</span><strong>${stats.returned_today}</strong></div>
+    <div class="d-flex justify-content-between py-2 border-bottom"><span>Errors Today</span><strong class="${stats.errors_today > 0 ? 'text-danger' : ''}">${stats.errors_today}</strong></div>
+    <div class="d-flex justify-content-between py-2"><span>Total Posts</span><strong>${stats.total_posts}</strong></div>`;
+
+  // Chart
+  const labels = chart.map(r => r.day);
+  const fetched = chart.map(r => r.fetched);
+  const returned = chart.map(r => r.returned);
+  if (activityChart) activityChart.destroy();
+  activityChart = new Chart(document.getElementById('activity-chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Fetched', data: fetched, borderColor: '#0d6efd', backgroundColor: '#0d6efd20', tension: .3, fill: true },
+        { label: 'Returned', data: returned, borderColor: '#198754', backgroundColor: '#19875420', tension: .3, fill: true },
+      ]
+    },
+    options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } }
+  });
+
+  // Recent activity
+  const tbody = document.getElementById('recent-activity');
+  tbody.innerHTML = activity.length ? activity.map(r => `
+    <tr>
+      <td class="small text-muted">${fmtTime(r.created_at)}</td>
+      <td><strong>${r.city_name}</strong></td>
+      <td><span class="badge bg-light text-dark">${r.source}</span></td>
+      <td>${r.fetched}</td>
+      <td>${r.returned}</td>
+      <td class="small">${fmtDuration(r.duration_ms)}</td>
+      <td>${r.error ? `<span class="badge bg-danger-subtle text-danger" title="${r.error}">Error</span>` : '<span class="badge bg-success-subtle text-success">OK</span>'}</td>
+    </tr>`).join('') : '<tr><td colspan="7" class="empty-state"><i class="bi bi-inbox"></i>No activity yet</td></tr>';
+}
+
+// ── Bots ──────────────────────────────────────────────────────────────────────
+async function loadBots() {
+  const bots = await api('/panel/api/bots');
+  const grid = document.getElementById('bots-grid');
+  if (!bots.length) {
+    grid.innerHTML = `<div class="col-12"><div class="empty-state"><i class="bi bi-robot"></i>No bots yet. Click "Add Bot" to create one.</div></div>`;
+    return;
+  }
+  grid.innerHTML = bots.map(b => `
+    <div class="col-md-6 col-lg-4">
+      <div class="card bot-card p-3">
+        <div class="d-flex align-items-start justify-content-between mb-2">
+          <div>
+            <div class="fw-semibold">${b.name}</div>
+            <div class="text-muted small"><i class="bi bi-geo-alt me-1"></i>${b.city_name}, ${b.country_code}</div>
+          </div>
+          <span class="badge ${b.active ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">${b.active ? 'Active' : 'Inactive'}</span>
+        </div>
+        <div class="small text-muted mb-1"><i class="bi bi-telegram me-1"></i>${b.bot_token_masked || '—'}</div>
+        <div class="small text-muted mb-3"><i class="bi bi-chat me-1"></i>Chat: ${b.telegram_chat_id}</div>
+        <div class="d-flex flex-wrap gap-2">
+          <button class="btn btn-sm btn-primary" onclick="runBot(${b.id}, this)"><i class="bi bi-play-fill me-1"></i>Run</button>
+          <button class="btn btn-sm btn-outline-secondary" onclick="testBot(${b.id}, this)"><i class="bi bi-wifi me-1"></i>Test</button>
+          <button class="btn btn-sm btn-outline-secondary" onclick="viewBotPosts(${b.id}, '${b.name}')"><i class="bi bi-clock-history me-1"></i>History</button>
+          <button class="btn btn-sm btn-outline-primary" onclick="editBot(${b.id})"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteBot(${b.id})"><i class="bi bi-trash"></i></button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+async function runBot(id, btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-sm me-1"></span>Running...';
+  try {
+    const res = await api(`/panel/api/bots/${id}/run`, { method: 'POST' });
+    if (res.error) toast(`Error: ${res.error}`, 'error');
+    else toast(`Done — fetched ${res.fetched}, posted ${res.posted} in ${fmtDuration(res.duration_ms)}`);
+    loadDashboard();
+  } catch(e) { toast('Request failed', 'error'); }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+}
+
+async function testBot(id, btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-sm me-1"></span>Testing...';
+  const res = await api(`/panel/api/bots/${id}/test`, { method: 'POST' });
+  btn.disabled = false;
+  btn.innerHTML = orig;
+  if (res.connected) toast('Telegram connection OK ✓');
+  else toast('Connection failed: ' + (res.error || 'unknown'), 'error');
+}
+
+async function viewBotPosts(id, name) {
+  document.getElementById('posts-modal-title').textContent = `${name} — Posting History`;
+  const modal = new bootstrap.Modal(document.getElementById('posts-modal'));
+  document.getElementById('posts-modal-body').innerHTML = '<div class="text-center py-4"><div class="spinner-border"></div></div>';
+  modal.show();
+  const posts = await api(`/panel/api/bots/${id}/posts?limit=30`);
+  document.getElementById('posts-modal-body').innerHTML = posts.length
+    ? posts.map(p => postCard(p)).join('')
+    : '<div class="empty-state"><i class="bi bi-inbox"></i>No posts yet</div>';
+}
+
+function openBotModal(bot = null) {
+  document.getElementById('bot-id').value = bot?.id || '';
+  document.getElementById('bot-modal-title').textContent = bot ? 'Edit Bot' : 'Add Bot';
+  document.getElementById('bot-name').value = bot?.name || '';
+  document.getElementById('bot-city').value = bot?.city_name || '';
+  document.getElementById('bot-country').value = bot?.country_code || '';
+  document.getElementById('bot-lang').value = bot?.news_language || 'en';
+  document.getElementById('bot-maxposts').value = bot?.max_posts_per_run || 5;
+  document.getElementById('bot-token').value = '';
+  document.getElementById('bot-chatid').value = bot?.telegram_chat_id || '';
+  document.getElementById('bot-openai').value = '';
+  document.getElementById('bot-newsapi').value = '';
+  document.getElementById('bot-active').checked = bot ? !!bot.active : true;
+  new bootstrap.Modal(document.getElementById('bot-modal')).show();
+}
+
+async function editBot(id) {
+  const bot = await api(`/panel/api/bots/${id}`);
+  openBotModal(bot);
+}
+
+async function saveBot() {
+  const id = document.getElementById('bot-id').value;
+  const data = {
+    name: document.getElementById('bot-name').value,
+    city_name: document.getElementById('bot-city').value,
+    country_code: document.getElementById('bot-country').value.toUpperCase(),
+    news_language: document.getElementById('bot-lang').value,
+    max_posts_per_run: parseInt(document.getElementById('bot-maxposts').value),
+    telegram_chat_id: document.getElementById('bot-chatid').value,
+    active: document.getElementById('bot-active').checked ? 1 : 0,
+  };
+  const token = document.getElementById('bot-token').value;
+  if (token) data.bot_token = token;
+  const openai = document.getElementById('bot-openai').value;
+  if (openai) data.openai_api_key = openai;
+  const newsapi = document.getElementById('bot-newsapi').value;
+  if (newsapi) data.newsapi_key = newsapi;
+
+  const url = id ? `/panel/api/bots/${id}` : '/panel/api/bots';
+  const method = id ? 'PUT' : 'POST';
+  const res = await api(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  if (res.error) { toast('Error: ' + res.error, 'error'); return; }
+  bootstrap.Modal.getInstance(document.getElementById('bot-modal')).hide();
+  toast(id ? 'Bot updated' : 'Bot created');
+  loadBots();
+}
+
+async function deleteBot(id) {
+  if (!confirm('Delete this bot?')) return;
+  await api(`/panel/api/bots/${id}`, { method: 'DELETE' });
+  toast('Bot deleted');
+  loadBots();
+}
+
+// ── Activity ──────────────────────────────────────────────────────────────────
+async function loadActivity() {
+  const data = await api('/panel/api/activity?limit=100');
+  const tbody = document.getElementById('activity-table');
+  tbody.innerHTML = data.length ? data.map(r => `
+    <tr>
+      <td class="small text-muted">${fmtTime(r.created_at)}</td>
+      <td><strong>${r.city_name}</strong></td>
+      <td><span class="badge bg-light text-dark">${r.source}</span></td>
+      <td>${r.fetched}</td>
+      <td>${r.returned}</td>
+      <td class="small">${fmtDuration(r.duration_ms)}</td>
+      <td>${r.error ? `<span class="text-danger small" title="${r.error}"><i class="bi bi-exclamation-triangle me-1"></i>${r.error.slice(0,60)}</span>` : '<span class="text-success small"><i class="bi bi-check-circle me-1"></i>OK</span>'}</td>
+    </tr>`).join('') : '<tr><td colspan="7" class="empty-state"><i class="bi bi-inbox"></i>No activity yet</td></tr>';
+}
+
+// ── Posts ─────────────────────────────────────────────────────────────────────
+function postCard(p) {
+  return `
+    <div class="article-card">
+      <div class="d-flex justify-content-between align-items-start mb-1">
+        <a href="${p.url || '#'}" target="_blank" class="fw-semibold text-decoration-none">${p.title}</a>
+        <div class="d-flex gap-1 ms-2 flex-shrink-0">
+          ${p.relevance_score != null ? `<span class="badge bg-primary bg-opacity-25 text-primary badge-relevance">${(p.relevance_score*100).toFixed(0)}%</span>` : ''}
+          ${sentimentBadge(p.sentiment)}
+        </div>
+      </div>
+      ${p.summary_en ? `<div class="small text-muted mb-1">${p.summary_en}</div>` : ''}
+      ${p.summary_fa ? `<div class="summary-fa">${p.summary_fa}</div>` : ''}
+      <div class="small text-muted mt-1">${fmtTime(p.posted_at)}</div>
+    </div>`;
+}
+
+async function loadPosts() {
+  const posts = await api('/panel/api/posts?limit=50');
+  const el = document.getElementById('posts-list');
+  el.innerHTML = posts.length ? posts.map(postCard).join('') : '<div class="empty-state"><i class="bi bi-inbox"></i>No posts yet</div>';
+}
+
+// ── Preview ───────────────────────────────────────────────────────────────────
+async function runPreview() {
+  const btn = document.getElementById('preview-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-sm me-1"></span>Fetching...';
+  document.getElementById('preview-results').innerHTML = '';
+
+  const body = {
+    city_name: document.getElementById('prev-city').value,
+    country_code: document.getElementById('prev-country').value.toUpperCase(),
+    news_language: document.getElementById('prev-lang').value,
+    max_results: parseInt(document.getElementById('prev-max').value),
+  };
+  const openai = document.getElementById('prev-openai').value;
+  if (openai) body.openai_api_key = openai;
+
+  try {
+    const res = await api('/api/news', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-search me-1"></i>Fetch News';
+
+    if (res.error) { document.getElementById('preview-results').innerHTML = `<div class="alert alert-danger">${res.error}</div>`; return; }
+
+    const meta = `<div class="text-muted small mb-3">Fetched <strong>${res.fetched}</strong> articles, showing <strong>${res.returned}</strong> relevant results for <strong>${res.city}</strong></div>`;
+    const cards = res.articles.map(a => `
+      <div class="article-card">
+        <div class="d-flex justify-content-between align-items-start mb-1">
+          <a href="${a.url}" target="_blank" class="fw-semibold text-decoration-none">${a.title}</a>
+          <div class="d-flex gap-1 ms-2 flex-shrink-0">
+            <span class="badge bg-primary bg-opacity-25 text-primary badge-relevance">${(a.relevance_score*100).toFixed(0)}% relevant</span>
+            ${sentimentBadge(a.sentiment)}
+          </div>
+        </div>
+        <div class="small text-muted mb-1"><i class="bi bi-broadcast me-1"></i>${a.source || '—'}</div>
+        ${a.summary_en && a.summary_en !== a.title ? `<div class="small text-muted mb-1">${a.summary_en}</div>` : ''}
+        ${a.summary_fa ? `<div class="summary-fa">${a.summary_fa}</div>` : ''}
+      </div>`).join('');
+
+    document.getElementById('preview-results').innerHTML = meta + (cards || '<div class="empty-state"><i class="bi bi-search"></i>No relevant articles found</div>');
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-search me-1"></i>Fetch News';
+    document.getElementById('preview-results').innerHTML = `<div class="alert alert-danger">Request failed: ${e.message}</div>`;
+  }
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function loadSettings() {
+  const s = await api('/panel/api/settings');
+  const labels = {
+    LIBRETRANSLATE_URL: 'LibreTranslate URL',
+    OLLAMA_BASE_URL: 'Ollama Base URL',
+    OLLAMA_MODEL: 'Ollama Model',
+    SCHEDULE_INTERVAL_MINUTES: 'Auto-run Interval (minutes)',
+    DATA_DIR: 'Data Directory',
+    SERVICE_PORT: 'Service Port',
+    BOT_MANAGER_URL: 'Bot Manager URL',
+  };
+  document.getElementById('settings-list').innerHTML = Object.entries(s).map(([k, v]) => `
+    <div class="col-md-6">
+      <div class="p-3 bg-light rounded">
+        <div class="small text-muted mb-1">${labels[k] || k}</div>
+        <div class="fw-semibold font-monospace small">${v || '<span class="text-muted">not set</span>'}</div>
+      </div>
+    </div>`).join('');
+}
+
+// Init
+loadDashboard();
+</script>
+</body>
+</html>
