@@ -366,8 +366,7 @@ class NewsProcessor:
         Falls back to MyMemory → LibreTranslate when no LLM is configured.
         """
         libretranslate_url = self.config.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL")
-
-            lang_note = f" The content is in {source_lang.upper()}." if source_lang != "en" else ""
+        lang_note = f" The content is in {source_lang.upper()}." if source_lang != "en" else ""
 
         if self.openai_client:
             try:
