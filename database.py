@@ -52,6 +52,7 @@ def init_db():
                 name TEXT NOT NULL,
                 url TEXT NOT NULL UNIQUE,
                 active INTEGER NOT NULL DEFAULT 1,
+                bypass_relevance INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -227,19 +228,22 @@ def get_global_feeds(active_only: bool = False) -> List[Dict]:
         return [dict(r) for r in c.execute(q).fetchall()]
 
 
-def add_global_feed(name: str, url: str) -> int:
+def add_global_feed(name: str, url: str, bypass_relevance: int = 0) -> int:
     with _conn() as c:
         cur = c.execute(
-            "INSERT OR IGNORE INTO global_feeds (name, url) VALUES (?, ?)", (name, url)
+            "INSERT OR IGNORE INTO global_feeds (name, url, bypass_relevance) VALUES (?, ?, ?)",
+            (name, url, bypass_relevance)
         )
         return cur.lastrowid
 
 
-def update_global_feed(feed_id: int, name: str = None, url: str = None, active: int = None):
+def update_global_feed(feed_id: int, name: str = None, url: str = None,
+                       active: int = None, bypass_relevance: int = None):
     updates = {}
     if name is not None: updates["name"] = name
     if url is not None: updates["url"] = url
     if active is not None: updates["active"] = active
+    if bypass_relevance is not None: updates["bypass_relevance"] = bypass_relevance
     if not updates:
         return
     set_clause = ", ".join(f"{k} = ?" for k in updates)

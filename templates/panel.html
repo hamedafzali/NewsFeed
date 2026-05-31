@@ -184,7 +184,7 @@
       </div>
       <div class="card-body p-0">
         <table class="table table-hover mb-0">
-          <thead><tr><th>Name</th><th>URL</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>URL</th><th>Active</th><th>Skip Relevance Filter</th><th></th></tr></thead>
           <tbody id="feeds-table"></tbody>
         </table>
       </div>
@@ -283,6 +283,10 @@
         <input type="hidden" id="feed-id">
         <div class="mb-3"><label class="form-label small fw-semibold">Feed Name *</label><input type="text" class="form-control" id="feed-name" placeholder="BBC World News"></div>
         <div class="mb-3"><label class="form-label small fw-semibold">RSS URL *</label><input type="url" class="form-control font-monospace" id="feed-url" placeholder="https://feeds.bbci.co.uk/news/world/rss.xml"></div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="feed-bypass">
+          <label class="form-check-label small" for="feed-bypass">Skip relevance filter <span class="text-muted">(include all articles regardless of city match)</span></label>
+        </div>
       </div>
       <div class="modal-footer border-0">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
@@ -640,37 +644,44 @@ async function loadFeeds() {
   tbody.innerHTML = feeds.length ? feeds.map(f => `
     <tr>
       <td class="fw-semibold">${f.name}</td>
-      <td><a href="${f.url}" target="_blank" class="font-monospace small text-muted text-decoration-none">${f.url}</a></td>
+      <td><a href="${f.url}" target="_blank" class="font-monospace small text-muted text-decoration-none">${f.url.length > 55 ? f.url.slice(0,55)+'…' : f.url}</a></td>
       <td>
         <div class="form-check form-switch mb-0">
-          <input class="form-check-input" type="checkbox" ${f.active ? 'checked' : ''} onchange="toggleFeed(${f.id}, this.checked)">
+          <input class="form-check-input" type="checkbox" ${f.active ? 'checked' : ''} onchange="toggleFeed(${f.id}, 'active', this.checked)">
         </div>
       </td>
       <td>
-        <button class="btn btn-sm btn-outline-primary me-1" onclick="editFeed(${f.id},'${f.name.replace(/'/g,"\\'")}','${f.url}')"><i class="bi bi-pencil"></i></button>
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" ${f.bypass_relevance ? 'checked' : ''} onchange="toggleFeed(${f.id}, 'bypass_relevance', this.checked)" title="When ON: all articles from this feed are included regardless of city relevance">
+        </div>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary me-1" onclick="editFeed(${f.id},'${f.name.replace(/'/g,"\\'")}','${f.url}',${f.bypass_relevance})"><i class="bi bi-pencil"></i></button>
         <button class="btn btn-sm btn-outline-danger" onclick="deleteFeed(${f.id})"><i class="bi bi-trash"></i></button>
       </td>
     </tr>`).join('') :
     '<tr><td colspan="4" class="empty-state"><i class="bi bi-rss"></i>No feeds yet. Add one above.</td></tr>';
 }
 
-function openFeedModal(id = '', name = '', url = '') {
+function openFeedModal(id = '', name = '', url = '', bypass = 0) {
   document.getElementById('feed-id').value = id;
   document.getElementById('feed-name').value = name;
   document.getElementById('feed-url').value = url;
+  document.getElementById('feed-bypass').checked = !!bypass;
   new bootstrap.Modal(document.getElementById('feed-modal')).show();
 }
 
-function editFeed(id, name, url) { openFeedModal(id, name, url); }
+function editFeed(id, name, url, bypass) { openFeedModal(id, name, url, bypass); }
 
 async function saveFeed() {
   const id = document.getElementById('feed-id').value;
   const name = document.getElementById('feed-name').value.trim();
   const url = document.getElementById('feed-url').value.trim();
+  const bypass = document.getElementById('feed-bypass').checked ? 1 : 0;
   if (!url) { toast('URL is required', 'error'); return; }
   const method = id ? 'PUT' : 'POST';
   const endpoint = id ? `/panel/api/feeds/${id}` : '/panel/api/feeds';
-  const res = await api(endpoint, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name: name || url, url }) });
+  const res = await api(endpoint, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name: name || url, url, bypass_relevance: bypass }) });
   if (res.error) { toast('Error: ' + res.error, 'error'); return; }
   bootstrap.Modal.getInstance(document.getElementById('feed-modal')).hide();
   toast(id ? 'Feed updated' : 'Feed added');
@@ -684,8 +695,8 @@ async function deleteFeed(id) {
   loadFeeds();
 }
 
-async function toggleFeed(id, active) {
-  await api(`/panel/api/feeds/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ active: active ? 1 : 0 }) });
+async function toggleFeed(id, field, val) {
+  await api(`/panel/api/feeds/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ [field]: val ? 1 : 0 }) });
 }
 
 async function quickAdd(name, url) {

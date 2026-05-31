@@ -146,6 +146,15 @@ class NewsProcessor:
         if newsapi_key and newsapi_key != "your_newsapi_key_here":
             articles.extend(self._fetch_from_newsapi())
 
+        # Unfiltered feeds — bypass relevance, mark them so caller can skip scoring
+        unfiltered_feeds = self.config.get("unfiltered_feeds") or []
+        if isinstance(unfiltered_feeds, str):
+            unfiltered_feeds = [f.strip() for f in unfiltered_feeds.replace(",", "\n").splitlines() if f.strip()]
+        for feed_url in unfiltered_feeds:
+            for a in self._fetch_from_rss(feed_url):
+                a["_bypass_relevance"] = True
+                articles.append(a)
+
         # Deduplicate by URL
         seen = set()
         unique = []
@@ -154,7 +163,7 @@ class NewsProcessor:
                 seen.add(a["url"])
                 unique.append(a)
 
-        self.logger.info(f"Fetched {len(unique)} articles ({len(custom_feeds)} custom feeds)")
+        self.logger.info(f"Fetched {len(unique)} articles ({len(custom_feeds)} custom, {len(unfiltered_feeds)} unfiltered feeds)")
         return unique
 
     def _fetch_from_rss(self, feed_url: str) -> List[Dict[str, Any]]:

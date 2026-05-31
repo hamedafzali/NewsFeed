@@ -190,15 +190,17 @@ def create_feed():
     if not data.get("url"):
         return jsonify({"error": "url is required"}), 400
     name = data.get("name") or data["url"]
-    feed_id = db.add_global_feed(name, data["url"])
+    feed_id = db.add_global_feed(name, data["url"], int(data.get("bypass_relevance", 0)))
     return jsonify({"id": feed_id, "message": "Feed added"}), 201
 
 
 @panel.route("/api/feeds/<int:feed_id>", methods=["PUT"])
 def update_feed(feed_id):
     data = request.get_json() or {}
+    br = data.get("bypass_relevance")
     db.update_global_feed(feed_id, name=data.get("name"), url=data.get("url"),
-                          active=data.get("active"))
+                          active=data.get("active"),
+                          bypass_relevance=int(br) if br is not None else None)
     return jsonify({"message": "Updated"})
 
 

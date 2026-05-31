@@ -161,7 +161,8 @@ def create_app():
             "model": body.get("model", "gpt-4o-mini"),
             "newsapi_key": body.get("newsapi_key"),
             "libretranslate_url": body.get("libretranslate_url") or os.getenv("LIBRETRANSLATE_URL"),
-            "custom_feeds": body.get("custom_feeds", []) + [f["url"] for f in db.get_global_feeds(active_only=True)],
+            "custom_feeds": body.get("custom_feeds", []) + [f["url"] for f in db.get_global_feeds(active_only=True) if not f["bypass_relevance"]],
+            "unfiltered_feeds": [f["url"] for f in db.get_global_feeds(active_only=True) if f["bypass_relevance"]],
             "max_posts_per_run": max_results,
         }
         finbert_url = body.get("finbert_url")
@@ -177,11 +178,13 @@ def create_app():
                 if len(results) >= max_results:
                     break
                 content = processor._extract_content(article["url"])
-                # Use title as fallback when content extraction fails (Google News redirects)
-                text_for_relevance = content if content and len(content) >= 200 else article["title"]
-                score = processor._calculate_relevance(article["title"], text_for_relevance)
-                if score < 0.3:
-                    continue
+                if article.get("_bypass_relevance"):
+                    score = 1.0
+                else:
+                    text_for_relevance = content if content and len(content) >= 200 else article["title"]
+                    score = processor._calculate_relevance(article["title"], text_for_relevance)
+                    if score < 0.3:
+                        continue
                 libretranslate_url = config.get("libretranslate_url")
                 if content:
                     summaries = processor._summarize_and_translate(content)
