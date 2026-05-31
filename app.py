@@ -205,8 +205,12 @@ def create_app():
             processor = NewsProcessor(config)
             raw_articles = processor._fetch_articles()
 
+            skip_scraping = body.get("skip_scraping", True)  # default fast for preview
+
             def process_one(article):
-                content, quality = processor._extract_content_with_quality(article)
+                content, quality = processor._extract_content_with_quality(
+                    article, skip_scraping=skip_scraping
+                )
                 if article.get("_bypass_relevance"):
                     score = 1.0
                 else:

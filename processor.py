@@ -232,16 +232,16 @@ class NewsProcessor:
         except Exception:
             return url
 
-    def _extract_content_with_quality(self, article: Dict[str, Any]) -> Tuple[str, str]:
+    def _extract_content_with_quality(self, article: Dict[str, Any],
+                                       skip_scraping: bool = False) -> Tuple[str, str]:
         """
         Return (content, quality) using the best available source:
           full_article    — scraped body ≥ 300 chars
           rss_description — description from the RSS feed
           title_only      — nothing but the headline (LLM will expand using its knowledge)
         """
-        # 1. Try to scrape full article.
-        #    Skip Google News URLs entirely — from EU servers they always hit GDPR consent.
-        if not article.get("is_google_news"):
+        # 1. Try to scrape full article (skip if caller requested fast mode or Google News)
+        if not skip_scraping and not article.get("is_google_news"):
             real_url = self._resolve_url(article["url"])
             scraped = self._scrape_article(real_url)
             if scraped and len(scraped) >= 300:
