@@ -6,23 +6,7 @@ import time
 from flask import Blueprint, jsonify, request, render_template, current_app
 
 import database as db
-from processor import NewsProcessor
-
-
-def _build_bot_sources(bot: dict) -> list:
-    """Global feeds + bot's own custom feeds."""
-    sources = []
-    for f in db.get_global_feeds(active_only=True):
-        sources.append({"url": f["url"], "bypass_relevance": bool(f.get("bypass_relevance"))})
-    for url in _parse_feeds(bot.get("custom_feeds", "")):
-        sources.append({"url": url, "bypass_relevance": False})
-    return sources
-
-
-def _parse_feeds(raw: str) -> list:
-    if not raw:
-        return []
-    return [u.strip() for u in raw.replace(",", "\n").splitlines() if u.strip()]
+from processor import NewsProcessor, run_bot as run_bot_pipeline
 
 panel = Blueprint("panel", __name__, url_prefix="/panel")
 
@@ -82,6 +66,9 @@ def get_bot(bot_id):
     bot = db.get_bot(bot_id)
     if not bot:
         return jsonify({"error": "Not found"}), 404
+    if bot.get("bot_token"):
+        bot["bot_token_masked"] = "****" + bot["bot_token"][-4:]
+        del bot["bot_token"]
     return jsonify(bot)
 
 
@@ -109,48 +96,14 @@ def run_bot(bot_id):
     if not bot.get("active"):
         return jsonify({"error": "Bot is inactive"}), 400
 
-    config = {
-        "bot_id": str(bot_id),
-        "bot_token": bot["bot_token"],
-        "telegram_chat_id": bot["telegram_chat_id"],
-        "city_name": bot["city_name"],
-        "country_code": bot["country_code"],
-        "news_language": bot.get("news_language", "en"),
-        "openai_api_key": bot.get("openai_api_key"),
-        "max_posts_per_run": bot.get("max_posts_per_run", 5),
-        "sources": _build_bot_sources(bot),
-    }
-
     start = time.time()
     try:
-        processor = NewsProcessor(config)
-        result = processor.process_news()
-        duration_ms = int((time.time() - start) * 1000)
-
-        db.log_activity(
-            city_name=bot["city_name"],
-            source=f"bot:{bot_id}",
-            fetched=result.processed,
-            returned=result.posted,
-            duration_ms=duration_ms,
-            error=result.error_message,
-        )
-        for article in result.articles:
-            db.log_post(
-                bot_id=bot_id,
-                title=article.get("title", ""),
-                url=article.get("url", ""),
-                summary_en=article.get("summary_en", ""),
-                summary_fa=article.get("summary_fa", ""),
-                sentiment=article.get("sentiment"),
-                relevance_score=article.get("relevance_score"),
-            )
-
+        result = run_bot_pipeline(bot)
         return jsonify({
             "status": result.status,
             "fetched": result.processed,
             "posted": result.posted,
-            "duration_ms": duration_ms,
+            "duration_ms": int((time.time() - start) * 1000),
             "error": result.error_message,
         })
     except Exception as e:
@@ -174,8 +127,14 @@ def test_bot(bot_id):
     }
     try:
         processor = NewsProcessor(config)
-        ok = processor.test_connection()
-        return jsonify({"connected": ok})
+        if not processor.publisher:
+            return jsonify({"connected": False, "error": "Missing bot token or chat id"})
+        if not processor.publisher.test_token():
+            return jsonify({"connected": False, "error": "Invalid bot token"})
+        chat = processor.publisher.test_chat()
+        if not chat.ok:
+            return jsonify({"connected": False, "error": f"Chat check failed: {chat.error}"})
+        return jsonify({"connected": True})
     except Exception as e:
         return jsonify({"connected": False, "error": str(e)})
 

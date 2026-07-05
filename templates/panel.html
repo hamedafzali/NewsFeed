@@ -291,9 +291,22 @@
         <div class="row g-3">
           <div class="col-md-6"><label class="form-label small fw-semibold">Bot Name *</label><input type="text" class="form-control" id="bot-name" placeholder="Tehran News Bot"></div>
           <div class="col-md-6"><label class="form-label small fw-semibold">City Name *</label><input type="text" class="form-control" id="bot-city" placeholder="Tehran"></div>
-          <div class="col-md-4"><label class="form-label small fw-semibold">Country Code *</label><input type="text" class="form-control" id="bot-country" placeholder="IR" maxlength="2"></div>
-          <div class="col-md-4"><label class="form-label small fw-semibold">Language</label><input type="text" class="form-control" id="bot-lang" placeholder="en" value="en"></div>
-          <div class="col-md-4"><label class="form-label small fw-semibold">Max Posts/Run</label><input type="number" class="form-control" id="bot-maxposts" value="5" min="1" max="20"></div>
+          <div class="col-md-3"><label class="form-label small fw-semibold">Country Code *</label><input type="text" class="form-control" id="bot-country" placeholder="DE" maxlength="2"></div>
+          <div class="col-md-3"><label class="form-label small fw-semibold">Source Language</label>
+            <select class="form-select" id="bot-lang">
+              <option value="en">English</option>
+              <option value="de">German</option>
+              <option value="fa">Persian</option>
+            </select>
+          </div>
+          <div class="col-md-3"><label class="form-label small fw-semibold">Channel Language</label>
+            <select class="form-select" id="bot-target-lang">
+              <option value="fa">Persian (فارسی)</option>
+              <option value="en">English</option>
+              <option value="de">German</option>
+            </select>
+          </div>
+          <div class="col-md-3"><label class="form-label small fw-semibold">Max Posts/Run</label><input type="number" class="form-control" id="bot-maxposts" value="5" min="1" max="20"></div>
           <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">Telegram</h6></div>
           <div class="col-md-7"><label class="form-label small fw-semibold">Bot Token *</label><input type="password" class="form-control" id="bot-token" placeholder="1234567890:ABC..."></div>
           <div class="col-md-5"><label class="form-label small fw-semibold">Chat ID *</label><input type="text" class="form-control" id="bot-chatid" placeholder="-100123456789"></div>
@@ -542,6 +555,7 @@ function openBotModal(bot = null) {
   document.getElementById('bot-city').value = bot?.city_name || '';
   document.getElementById('bot-country').value = bot?.country_code || '';
   document.getElementById('bot-lang').value = bot?.news_language || 'en';
+  document.getElementById('bot-target-lang').value = bot?.target_language || 'fa';
   document.getElementById('bot-maxposts').value = bot?.max_posts_per_run || 5;
   document.getElementById('bot-token').value = '';
   document.getElementById('bot-chatid').value = bot?.telegram_chat_id || '';
@@ -564,6 +578,7 @@ async function saveBot() {
     city_name: document.getElementById('bot-city').value,
     country_code: document.getElementById('bot-country').value.toUpperCase(),
     news_language: document.getElementById('bot-lang').value,
+    target_language: document.getElementById('bot-target-lang').value,
     max_posts_per_run: parseInt(document.getElementById('bot-maxposts').value),
     telegram_chat_id: document.getElementById('bot-chatid').value,
     active: document.getElementById('bot-active').checked ? 1 : 0,

@@ -20,10 +20,11 @@ class NewsPipeline:
         self.enrichment = EnrichmentEngine()
         self.ranking = RankingEngine()
 
-    def refresh(self, query: str = "", language: str = "en", country: str = "US", limit: int = 25, skip_web: bool = True, translate: bool = False, request_id: str = "") -> PipelineResult:
+    def refresh(self, query: str = "", language: str = "en", country: str = "US", limit: int = 25, skip_web: bool = True, translate: bool = False, request_id: str = "", sources: List[Dict[str, Any]] | None = None) -> PipelineResult:
         started = time.time()
         result = PipelineResult()
-        sources = self.store.list_sources(active_only=True)
+        if sources is None:
+            sources = self.store.list_sources(active_only=True)
         raw_articles = self.ingestor.fetch(sources, query=query, language=language, country=country)
         result.fetched = len(raw_articles)
         for raw in raw_articles[:limit]:

@@ -1,9 +1,19 @@
+"""News processor: fetches articles via the v3 pipeline, translates summaries to the
+channel's target language, and posts them to Telegram.
+
+This is the delivery layer the panel and scheduler drive — one bot = one Telegram
+channel with its own token, chat id, language, and feed list.
+"""
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+import database as db
 from news_platform.config import get_settings
-from news_platform.models import IntelligenceArticle
 from news_platform.pipeline import NewsPipeline
+from news_platform.pipeline.translation import Translator
+from news_platform.publishing import TelegramPublisher
 from news_platform.storage import SQLiteStore
 
 
@@ -18,45 +28,195 @@ class NewsResult:
 
 
 class NewsProcessor:
-    """Compatibility adapter over the v3 NewsPipeline."""
+    """Runs the fetch → translate → post flow for a single bot/channel."""
 
     def __init__(self, bot_config: Dict[str, Any]):
         self.config = bot_config
         self.settings = get_settings()
         self.store = SQLiteStore(self.settings.data_dir)
         self.pipeline = NewsPipeline(self.settings, self.store)
+        self.translator = Translator()
+        self.logger = logging.getLogger(__name__)
+        self.publisher = None
+        if bot_config.get("bot_token") and bot_config.get("telegram_chat_id"):
+            self.publisher = TelegramPublisher(bot_config["bot_token"], str(bot_config["telegram_chat_id"]))
 
     def process_news(self) -> NewsResult:
+        started = time.time()
+        max_posts = int(self.config.get("max_posts_per_run", 5))
         try:
             result = self.pipeline.refresh(
                 query=self.config.get("city_name", ""),
                 language=self.config.get("news_language", "en"),
                 country=self.config.get("country_code", "US"),
-                limit=int(self.config.get("max_posts_per_run", 10)),
+                limit=min(max(max_posts * 4, 20), 60),
                 skip_web=bool(self.config.get("skip_scraping", True)),
-                translate=bool(self.config.get("translate", False)),
+                translate=False,
+                sources=self._sources(),
             )
+            candidates = self._candidates(result)
+            posted = 0
+            consecutive_failures = 0
+            out_articles: List[Dict[str, Any]] = []
+            bot_id = self._bot_id()
+
+            for article in candidates:
+                if self.publisher and consecutive_failures >= 3:
+                    # Channel is misconfigured (bad chat id/token) — don't burn
+                    # translation quota on articles that can't be delivered.
+                    break
+                if self.publisher and posted < max_posts:
+                    if bot_id is not None and db.has_posted(bot_id, article["url"]):
+                        continue
+                    data = self._enrich_summaries(article)
+                    send = self.publisher.send_article(
+                        title=data["post_title"],
+                        summary=data["post_summary"],
+                        url=article["url"],
+                        source=article["source_name"],
+                        language=self.config.get("target_language", "fa"),
+                        image_url=article.get("image_url"),
+                    )
+                    data["posted"] = send.ok
+                    data["post_error"] = send.error
+                    if bot_id is not None:
+                        db.log_post(
+                            bot_id=bot_id,
+                            title=article["title"],
+                            url=article["url"],
+                            summary_en=data["summary_en"],
+                            summary_fa=data["summary_target"],
+                            relevance_score=article.get("relevance_score"),
+                            posted=send.ok,
+                            error=send.error,
+                        )
+                    if send.ok:
+                        posted += 1
+                        consecutive_failures = 0
+                    else:
+                        consecutive_failures += 1
+                else:
+                    data = dict(article)
+                    data.setdefault("summary_en", (article.get("summary") or {}).get("tldr", ""))
+                    data.setdefault("summary_fa", "")
+                    data.setdefault("posted", False)
+                out_articles.append(data)
+
             return NewsResult(
                 processed=result.processed,
-                posted=0,
-                duration=result.duration_ms / 1000,
+                posted=posted,
+                duration=time.time() - started,
                 status="success",
-                articles=[article.to_dict() for article in result.articles],
+                articles=out_articles,
             )
         except Exception as exc:
-            return NewsResult(status="error", error_message=str(exc))
+            self.logger.exception("process_news failed")
+            return NewsResult(status="error", error_message=str(exc), duration=time.time() - started)
+
+    def _candidates(self, result) -> List[Dict[str, Any]]:
+        """Fresh pipeline articles plus recently stored ones (retries failed sends),
+        best quality first."""
+        articles = {a.url: a.to_dict() for a in result.articles}
+        for stored in self.store.list_articles({"limit": 50}):
+            articles.setdefault(stored["url"], stored)
+        return sorted(articles.values(), key=lambda a: a.get("quality_score") or 0, reverse=True)
+
+    def _enrich_summaries(self, article: Dict[str, Any]) -> Dict[str, Any]:
+        """Build English + target-language summaries for one article."""
+        target = self.config.get("target_language", "fa")
+        source_lang = article.get("language") or "en"
+        title = article["title"]
+        base_summary = (article.get("summary") or {}).get("tldr") or title
+
+        summary_en = base_summary if source_lang == "en" else self.translator.translate(base_summary, source_lang, "en")
+        if target == "en":
+            summary_target = summary_en
+            post_title = title if source_lang == "en" else self.translator.translate(title, source_lang, "en")
+        elif target == source_lang:
+            summary_target = base_summary
+            post_title = title
+        else:
+            # Translate from English when we already have it (pivot done once).
+            summary_target = self.translator.translate(summary_en, "en", target)
+            post_title = self.translator.translate(title, source_lang, target)
+
+        data = dict(article)
+        data["summary_en"] = summary_en
+        data["summary_fa"] = summary_target if target == "fa" else ""
+        data["summary_target"] = summary_target
+        data["post_title"] = post_title or title
+        data["post_summary"] = summary_target or summary_en
+        data["posted"] = False
+        return data
+
+    def _sources(self) -> Optional[List[Dict[str, Any]]]:
+        sources = self.config.get("sources")
+        return sources if sources else None
+
+    def _bot_id(self) -> Optional[int]:
+        try:
+            return int(self.config.get("bot_id"))
+        except (TypeError, ValueError):
+            return None
 
     def get_stats(self) -> Dict[str, Any]:
+        bot_id = self._bot_id()
+        posts = db.get_posts(bot_id=bot_id, limit=1) if bot_id is not None else []
         stats = self.store.stats()
+        posted_count = len(db.get_posts(bot_id=bot_id, limit=100000)) if bot_id is not None else 0
         return {
             "total_articles": stats["total_articles"],
-            "posted_articles": 0,
-            "unposted_articles": stats["total_articles"],
-            "last_posted_at": stats.get("last_pipeline_event"),
+            "posted_articles": posted_count,
+            "unposted_articles": max(stats["total_articles"] - posted_count, 0),
+            "last_posted_at": posts[0]["posted_at"] if posts else None,
         }
 
     def test_connection(self) -> bool:
-        return True
+        if not self.publisher:
+            return False
+        return self.publisher.test_token()
 
     def get_sentiment(self, titles: List[str], finbert_url: str) -> Dict[str, Any]:
         return {}
+
+
+def run_bot(bot: Dict[str, Any]) -> NewsResult:
+    """Run the full pipeline for a bot row from the panel database.
+
+    Used by both the panel's manual Run button and the background scheduler.
+    """
+    sources = []
+    for feed in db.get_global_feeds(active_only=True):
+        sources.append({"url": feed["url"], "name": feed["name"],
+                        "bypass_relevance": bool(feed.get("bypass_relevance"))})
+    for url in _parse_feeds(bot.get("custom_feeds") or ""):
+        sources.append({"url": url, "name": url, "bypass_relevance": False})
+
+    config = {
+        "bot_id": str(bot["id"]),
+        "bot_token": bot["bot_token"],
+        "telegram_chat_id": bot["telegram_chat_id"],
+        "city_name": bot["city_name"],
+        "country_code": bot["country_code"],
+        "news_language": bot.get("news_language", "en"),
+        "target_language": bot.get("target_language", "fa"),
+        "max_posts_per_run": bot.get("max_posts_per_run", 5),
+        "sources": sources,
+    }
+    started = time.time()
+    result = NewsProcessor(config).process_news()
+    db.log_activity(
+        city_name=bot["city_name"],
+        source=f"bot:{bot['id']}",
+        fetched=result.processed,
+        returned=result.posted,
+        duration_ms=int((time.time() - started) * 1000),
+        error=result.error_message,
+    )
+    return result
+
+
+def _parse_feeds(raw: str) -> List[str]:
+    if not raw:
+        return []
+    return [u.strip() for u in raw.replace(",", "\n").splitlines() if u.strip()]

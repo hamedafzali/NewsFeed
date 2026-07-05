@@ -5,5 +5,6 @@ python-dotenv==1.0.0
 feedparser==6.0.10
 beautifulsoup4==4.12.2
 tenacity==8.2.3
-python-telegram-bot==20.6
+APScheduler==3.10.4
+gunicorn==21.2.0
 pytest==8.2.2

@@ -1,6 +1,6 @@
 # News Intelligence Platform
 
-A production-oriented Flask news engine that ingests RSS feeds, extracts clean article text, deduplicates, ranks, summarizes, stores, and exposes articles through a secure versioned API plus a dashboard.
+A Flask news engine that ingests RSS feeds, extracts clean article text, deduplicates, ranks, summarizes, translates (en/de/fa via LibreTranslate + MyMemory), and **posts articles to Telegram channels**. Channels ("bots") are managed in a web panel; a background scheduler runs all active channels automatically.
 
 ## Quick Start
 
@@ -9,13 +9,22 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Service and dashboard run on:
+Service runs on:
 
-- Dashboard: `http://localhost:8003/dashboard`
+- **Management panel**: `http://localhost:8003/panel/` — add channels, feeds, run/test bots, see posting history
+- Article dashboard: `http://localhost:8003/dashboard`
 - Health: `http://localhost:8003/health`
 - API health: `http://localhost:8003/api/v1/health`
 
-If `API_KEY` is set, all `/api/v1/*` endpoints require `X-API-Key`.
+If `API_KEY` is set, all `/api/v1/*` endpoints require `X-API-Key`. (`API_KEY` is *not* the Telegram bot token — bot tokens are configured per-channel in the panel.)
+
+## Feeding a Telegram channel
+
+1. Create a bot with @BotFather, copy its token.
+2. Add the bot as **administrator** to your channel (with "Post messages" permission).
+3. Open the panel → Add Bot: set city/country, source language (feeds), channel language (fa/en/de — summaries are translated, de→fa goes via English), token, and the channel `@username` or `-100…` chat id.
+4. Click **Test** (verifies token *and* channel access), then **Run**.
+5. Set `SCHEDULE_INTERVAL_MINUTES` (default 30) to post automatically; already-posted articles are never re-sent per channel.
 
 ## API
 

@@ -25,13 +25,22 @@ def create_app() -> Flask:
 
     app.register_blueprint(create_api_blueprint())
 
+    # Management panel (bots/channels, feeds, posts) — lives in panel.db.
+    import database as paneldb
+    from panel import panel as panel_blueprint
+
+    paneldb.init_db()
+    app.register_blueprint(panel_blueprint)
+
+    _start_scheduler(app)
+
     @app.before_request
     def request_context():
         g.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
 
     @app.get("/")
     def root():
-        return redirect("/dashboard")
+        return redirect("/panel/")
 
     @app.get("/dashboard")
     def dashboard():
@@ -92,6 +101,38 @@ def create_app() -> Flask:
         return jsonify({"error": "Not found"}), 404
 
     return app
+
+
+def _start_scheduler(app: Flask) -> None:
+    """Run all active bots every SCHEDULE_INTERVAL_MINUTES (0 disables)."""
+    interval = int(os.getenv("SCHEDULE_INTERVAL_MINUTES", "0"))
+    if interval <= 0:
+        return
+
+    import logging
+
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    logger = logging.getLogger(__name__)
+
+    def _run_all_bots():
+        import database as paneldb
+        from processor import run_bot
+
+        for bot in paneldb.get_bots(active_only=True, include_secrets=True):
+            try:
+                result = run_bot(bot)
+                logger.info("scheduled run bot=%s posted=%s processed=%s status=%s",
+                            bot["id"], result.posted, result.processed, result.status)
+            except Exception:
+                logger.exception("scheduled run failed for bot=%s", bot.get("id"))
+
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(_run_all_bots, "interval", minutes=interval,
+                      max_instances=1, coalesce=True)
+    scheduler.start()
+    app.extensions["scheduler"] = scheduler
+    logging.getLogger(__name__).info("Scheduler started: running all active bots every %s minutes", interval)
 
 
 if __name__ == "__main__":
