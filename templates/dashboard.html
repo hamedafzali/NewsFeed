@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>News Intelligence Platform</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root { color-scheme: light; --soft:#f6f8fb; --ink:#14213d; }
+    body { background: var(--soft); color: var(--ink); }
+    .shell { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    .card { border: 0; border-radius: 18px; box-shadow: 0 10px 28px rgba(20,33,61,.08); }
+    .metric { font-size: 2rem; font-weight: 800; }
+    .article { cursor: pointer; transition: transform .12s ease; }
+    .article:hover { transform: translateY(-2px); }
+    .tag { border-radius: 999px; padding: .2rem .55rem; background:#e9f2ff; color:#0d6efd; font-size:.75rem; }
+    .summary { color:#4b5563; }
+    pre { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <h1 class="fw-black mb-1">News Intelligence Platform</h1>
+      <div class="text-muted">Ingest, extract, rank, summarize, and explore news.</div>
+    </div>
+    <button class="btn btn-primary btn-lg" onclick="refreshNews()">Refresh Pipeline</button>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-3"><div class="card p-3"><div class="text-muted">Total Articles</div><div id="m-total" class="metric">—</div></div></div>
+    <div class="col-md-3"><div class="card p-3"><div class="text-muted">Today</div><div id="m-today" class="metric">—</div></div></div>
+    <div class="col-md-3"><div class="card p-3"><div class="text-muted">Errors Today</div><div id="m-errors" class="metric">—</div></div></div>
+    <div class="col-md-3"><div class="card p-3"><div class="text-muted">Auth</div><div class="metric">{{ "On" if auth_enabled else "Off" }}</div></div></div>
+  </div>
+
+  <div class="card p-3 mb-4">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-3"><label class="form-label">Search</label><input id="q" class="form-control" placeholder="AI, Berlin, markets…"></div>
+      <div class="col-md-2"><label class="form-label">Topic</label><input id="topic" class="form-control" placeholder="tech"></div>
+      <div class="col-md-2"><label class="form-label">Language</label><input id="language" class="form-control" placeholder="en"></div>
+      <div class="col-md-2"><label class="form-label">Min Quality</label><input id="quality" class="form-control" type="number" min="0" max="1" step=".1" placeholder="0.4"></div>
+      <div class="col-md-3 d-flex gap-2"><button class="btn btn-outline-primary flex-fill" onclick="loadArticles()">Filter</button><button class="btn btn-outline-secondary" onclick="clearFilters()">Clear</button></div>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-8">
+      <div id="articles" class="d-grid gap-3"></div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card p-3 mb-3">
+        <h5>Pipeline Control</h5>
+        <input id="refresh-query" class="form-control mb-2" placeholder="Query/city e.g. Tübingen">
+        <div class="d-flex gap-2">
+          <input id="refresh-lang" class="form-control" value="en" maxlength="5">
+          <input id="refresh-country" class="form-control" value="US" maxlength="2">
+        </div>
+      </div>
+      <div class="card p-3">
+        <h5>Recent Logs</h5>
+        <div id="logs" class="small text-muted">Loading…</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const authEnabled = {{ "true" if auth_enabled else "false" }};
+let apiKey = localStorage.getItem('newsApiKey') || '';
+if (authEnabled && !apiKey) {
+  apiKey = prompt('API key required for dashboard API calls') || '';
+  if (apiKey) localStorage.setItem('newsApiKey', apiKey);
+}
+const headers = {'Content-Type': 'application/json', ...(apiKey ? {'X-API-Key': apiKey} : {})};
+async function api(path, opts = {}) {
+  const res = await fetch(path, {...opts, headers: {...headers, ...(opts.headers || {})}});
+  const data = await res.json();
+  if (!res.ok || data.status === 'error') throw new Error(data?.data?.error || 'Request failed');
+  return data.data;
+}
+async function loadStats() {
+  const data = await api('/api/v1/stats');
+  document.getElementById('m-total').textContent = data.stats.total_articles;
+  document.getElementById('m-today').textContent = data.stats.articles_today;
+  document.getElementById('m-errors').textContent = data.stats.errors_today;
+  document.getElementById('logs').innerHTML = data.logs.map(l => `<div class="border-bottom py-2"><b>${l.stage}</b> ${l.status}<br>${l.message || ''}</div>`).join('') || 'No logs yet.';
+}
+async function loadArticles() {
+  const params = new URLSearchParams();
+  for (const [id, key] of [['q','q'], ['topic','topic'], ['language','language'], ['quality','min_quality']]) {
+    const val = document.getElementById(id).value.trim();
+    if (val) params.set(key, val);
+  }
+  const articles = await api('/api/v1/articles?' + params.toString());
+  document.getElementById('articles').innerHTML = articles.map(renderArticle).join('') || `<div class="card p-5 text-center text-muted">No articles yet. Run a refresh to wake the beast.</div>`;
+}
+function renderArticle(a) {
+  return `<article class="card article p-3">
+    <div class="d-flex justify-content-between gap-3">
+      <div>
+        <div class="mb-2"><span class="tag">${a.topic}</span> <span class="tag">${a.language}</span> <span class="tag">Q ${Number(a.quality_score).toFixed(2)}</span></div>
+        <h4>${escapeHtml(a.title)}</h4>
+        <p class="summary">${escapeHtml(a.summary.tldr || '')}</p>
+        <div class="small text-muted">${escapeHtml(a.source_name)} · ${a.published_at || 'unknown date'}</div>
+      </div>
+    </div>
+  </article>`;
+}
+async function refreshNews() {
+  const body = {
+    query: document.getElementById('refresh-query').value.trim(),
+    language: document.getElementById('refresh-lang').value.trim() || 'en',
+    country: document.getElementById('refresh-country').value.trim() || 'US',
+    limit: 25,
+    skip_web: true
+  };
+  await api('/api/v1/refresh', {method:'POST', body: JSON.stringify(body)});
+  await Promise.all([loadStats(), loadArticles()]);
+}
+function clearFilters() {
+  ['q','topic','language','quality'].forEach(id => document.getElementById(id).value = '');
+  loadArticles();
+}
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+}
+Promise.all([loadStats(), loadArticles()]).catch(err => {
+  document.getElementById('articles').innerHTML = `<div class="alert alert-danger">${escapeHtml(err.message)}</div>`;
+});
+</script>
+</body>
+</html>

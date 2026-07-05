@@ -1,71 +1,24 @@
 services:
-  news-feed:
+  news-platform:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: news-feed
-    ports:
-      - "8003:8003"
+    container_name: news-platform
     environment:
-      - BOT_MANAGER_URL=http://host.docker.internal:5002
-      - SERVICE_ID=news-feed-1
-      - SERVICE_PORT=8003
-      - SECRET_KEY=news-feed-secret-key
-      - API_KEY=
-      - SERVICE_API_KEY=
-      - SCHEDULE_INTERVAL_MINUTES=0
-      - BATCH_MAX_WORKERS=5
+      - SERVICE_PORT=${SERVICE_PORT:-8003}
       - DATA_DIR=/app/data
-      - LIBRETRANSLATE_URL=http://libretranslate:5000
-      - OLLAMA_BASE_URL=http://ollama:11434/v1
-      - OLLAMA_MODEL=qwen2.5:1.5b
+      - API_KEY=${API_KEY:-}
+      - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en}
+      - REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT_SECONDS:-12}
+      - MAX_FEED_ENTRIES=${MAX_FEED_ENTRIES:-40}
+    ports:
+      - "${SERVICE_PORT:-8003}:${SERVICE_PORT:-8003}"
     volumes:
       - ./data:/app/data
-      - ./templates:/app/templates
-    depends_on:
-      libretranslate:
-        condition: service_healthy
-      ollama:
-        condition: service_started
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:${SERVICE_PORT:-8003}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-
-  libretranslate:
-    image: libretranslate/libretranslate:latest
-    container_name: libretranslate
-    ports:
-      - "5005:5000"
-    environment:
-      - LT_LOAD_ONLY=en,fa,de
-      - LT_DISABLE_WEB_UI=true
-    volumes:
-      - libretranslate-data:/home/libretranslate/.local
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; data=urllib.request.urlopen('http://localhost:5000/languages').read().decode(); exit(0 if 'Persian' in data else 1)\""]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 120s
-
-  ollama:
-    image: ollama/ollama
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    restart: unless-stopped
-
-volumes:
-  libretranslate-data:
-  ollama-data:
-
-networks:
-  default:
-    name: news-feed-network

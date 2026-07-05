@@ -1,172 +1,93 @@
-# NewsFeed
+# News Intelligence Platform
 
-A REST microservice that fetches, filters, and summarizes city-specific news using AI. Supports posting to Telegram channels or returning results directly via API.
-
-## What it does
-
-1. Fetches recent news for a city from Google News RSS and NewsAPI
-2. Filters articles by relevance using LLM scoring (or keyword fallback)
-3. Summarizes each article and translates to Persian
-4. Posts to a Telegram channel — or returns results as JSON
+A production-oriented Flask news engine that ingests RSS feeds, extracts clean article text, deduplicates, ranks, summarizes, stores, and exposes articles through a secure versioned API plus a dashboard.
 
 ## Quick Start
 
 ```bash
-docker compose up -d
+cp .env.example .env
+docker compose up --build
 ```
 
-Service runs on `http://localhost:5003`.
+Service and dashboard run on:
+
+- Dashboard: `http://localhost:8003/dashboard`
+- Health: `http://localhost:8003/health`
+- API health: `http://localhost:8003/api/v1/health`
+
+If `API_KEY` is set, all `/api/v1/*` endpoints require `X-API-Key`.
 
 ## API
 
-### Get news as JSON (no Telegram required)
+All v1 API responses use:
 
-```bash
-curl -X POST http://localhost:5003/api/news \
-  -H "Content-Type: application/json" \
-  -d '{
-    "city_name": "Tehran",
-    "country_code": "IR",
-    "news_language": "en",
-    "max_results": 5
-  }'
-```
-
-**Response:**
 ```json
 {
-  "city": "Tehran",
-  "fetched": 20,
-  "returned": 3,
-  "articles": [
-    {
-      "title": "...",
-      "url": "...",
-      "source": "BBC",
-      "published_at": "...",
-      "relevance_score": 0.85,
-      "summary_en": null,
-      "summary_fa": null
-    }
-  ]
+  "status": "success",
+  "data": {},
+  "meta": {}
 }
 ```
 
-### With AI summaries (OpenAI)
+### Endpoints
+
+- `GET /api/v1/health`
+- `GET /api/v1/ready`
+- `GET /api/v1/articles`
+- `GET /api/v1/articles/{id}`
+- `POST /api/v1/refresh`
+- `POST /api/v1/process`
+- `GET /api/v1/stats`
+- `GET /api/v1/sources`
+- `POST /api/v1/sources`
+
+### Refresh Example
 
 ```bash
-curl -X POST http://localhost:5003/api/news \
+curl -X POST http://localhost:8003/api/v1/refresh \
   -H "Content-Type: application/json" \
-  -d '{
-    "city_name": "Tehran",
-    "country_code": "IR",
-    "news_language": "en",
-    "openai_api_key": "sk-...",
-    "max_results": 5
-  }'
-```
-
-### With AI summaries (Ollama — local, free)
-
-```bash
-# First: install and run Ollama on your machine
-brew install ollama && ollama pull llama3.2 && ollama serve
-
-# Then call the API
-curl -X POST http://localhost:5003/api/news \
-  -H "Content-Type: application/json" \
-  -d '{
-    "city_name": "Tehran",
-    "country_code": "IR",
-    "news_language": "en",
-    "ollama_base_url": "http://host.docker.internal:11434/v1",
-    "model": "llama3.2",
-    "max_results": 5
-  }'
-```
-
-### Post to Telegram
-
-```bash
-curl -X POST http://localhost:5003/api/process/direct \
-  -H "Content-Type: application/json" \
-  -d '{
-    "bot_token": "YOUR_BOT_TOKEN",
-    "telegram_chat_id": "YOUR_CHAT_ID",
-    "city_name": "Tehran",
-    "country_code": "IR",
-    "news_language": "en",
-    "openai_api_key": "sk-...",
-    "max_posts_per_run": 3
-  }'
-```
-
-### Health check
-
-```bash
-curl http://localhost:5003/health
-```
-
-## Request parameters for `/api/news`
-
-| Parameter | Required | Description |
-|---|---|---|
-| `city_name` | Yes | City to fetch news for (e.g. `"Tehran"`) |
-| `country_code` | Yes | ISO country code (e.g. `"IR"`, `"DE"`) |
-| `news_language` | Yes | Language code (e.g. `"en"`, `"fa"`) |
-| `max_results` | No | Max articles to return (default: `5`) |
-| `openai_api_key` | No | Enables AI summaries via OpenAI |
-| `ollama_base_url` | No | Use a local Ollama instance instead of OpenAI |
-| `model` | No | Model name (default: `gpt-4o-mini` or your Ollama model) |
-| `newsapi_key` | No | Adds NewsAPI as a second news source |
-
-## Configuration (docker-compose.yml)
-
-| Variable | Default | Description |
-|---|---|---|
-| `BOT_MANAGER_URL` | `http://localhost:5002` | Bot Manager service URL |
-| `SERVICE_ID` | `news-feed-1` | Unique service identifier |
-| `API_KEY` | _(empty)_ | Set to enable auth on all `/api/*` endpoints |
-| `SERVICE_API_KEY` | _(empty)_ | Key used to register with Bot Manager |
-| `SCHEDULE_INTERVAL_MINUTES` | `0` | Auto-run all bots on this interval (0 = disabled) |
-| `BATCH_MAX_WORKERS` | `5` | Max concurrent bots during batch runs |
-| `DATA_DIR` | `/app/data` | Directory for per-bot SQLite databases |
-
-## Running tests
-
-```bash
-docker exec news-feed python -m pytest tests/ -v
+  -d '{"query":"Tübingen","language":"de","country":"DE","limit":10}'
 ```
 
 ## Architecture
 
-```
-Google News RSS  ──┐
-NewsAPI          ──┤──▶  Fetch  ──▶  Filter  ──▶  Summarize  ──▶  /api/news response
-                         (relevance scoring)      (LLM or fallback)
-                                                       │
-                                                       └──▶  Telegram channel (optional)
+```text
+news_platform/
+├── api/          # Versioned API, auth, error envelope
+├── pipeline/     # Ingestion, extraction, enrichment, ranking, orchestration
+├── storage/      # SQLite implementation with PostgreSQL-ready table boundaries
+├── utils/        # Logging and URL normalization
+├── app.py        # Flask app factory
+└── models.py     # Typed pipeline data contracts
 ```
 
-## AI options
+## Storage
 
-| Option | Cost | Speed | Persian quality |
-|---|---|---|---|
-| OpenAI `gpt-4o-mini` | ~$0.001/article | Fast | Excellent |
-| Ollama `llama3.2` | Free | Slower | Good |
-| Ollama `qwen2.5` | Free | Slower | Better for Persian |
-| None | Free | Instant | No summaries |
+SQLite tables:
 
-## Project structure
+- `articles`
+- `sources`
+- `topics`
+- `processing_logs`
+- `errors`
 
+Indexes cover source/date, topic/date, language, quality, and content hash.
+
+## Development
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pytest -q
+python app.py
 ```
-news-feed/
-├── app.py            # Flask routes + scheduler
-├── processor.py      # Fetch, filter, summarize, post logic
-├── service.py        # Bot Manager integration
-├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-└── tests/
-    └── test_processor.py
-```
+
+## Legacy Compatibility
+
+The old endpoints still exist for transitional callers:
+
+- `POST /api/news`
+- `POST /api/process/direct`
+
+New integrations should use `/api/v1/*`.
