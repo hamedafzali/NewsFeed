@@ -1,0 +1,213 @@
+"""Mistral-backed post writer: summarises an article and writes it in the channel's language.
+
+Configured like Trainova: MISTRAL_API_KEY in the deployment's environment turns it
+on (empty = off, and the processor falls back to LibreTranslate). MISTRAL_MODEL pins
+a model; otherwise models are tried in order, skipping ones the key's tier can't use
+(403/404) and ones out of quota (429, cooled down for a while). Requests are spaced
+to stay under the ~1 request/second limit of lower tiers.
+"""
+import json
+import logging
+import os
+import re
+import threading
+import time
+from typing import Any, Dict, List, Optional
+
+import requests
+
+API_URL = "https://api.mistral.ai/v1/chat/completions"
+MODELS = ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest",
+          "open-mistral-nemo", "ministral-8b-latest"]
+
+LANGUAGE_NAMES = {"fa": "Persian (Farsi)", "en": "English", "de": "German"}
+PERSIAN_CHARS = re.compile(r"[؀-ۿ]")
+# Small models sometimes slip into other scripts mid-word (e.g. Devanagari in Persian).
+FOREIGN_SCRIPT = re.compile(r"[ऀ-෿Ѐ-ӿ぀-ヿ一-鿿]")
+# A Latin fragment glued to Persian letters ("اوleshky") is a half-translated name.
+MIXED_WORD = re.compile(r"[؀-ۿ][A-Za-z]|[A-Za-z][؀-ۿ]")
+
+
+class LlmUnavailable(Exception):
+    pass
+
+
+class MistralClient:
+    # Shared across instances: the processor builds a new client per run, but what
+    # we learned about the key (denied models, quota cooldowns) should persist.
+    _lock = threading.Lock()
+    _denied: set = set()
+    _cooling_until: Dict[str, float] = {}
+    _working: Optional[str] = None
+    _last_start = 0.0
+
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, timeout: int = 45):
+        self.api_key = (api_key if api_key is not None else os.getenv("MISTRAL_API_KEY", "")).strip()
+        self.pinned = (model if model is not None else os.getenv("MISTRAL_MODEL", "")).strip()
+        self.timeout = timeout
+        self.min_interval = float(os.getenv("MISTRAL_MIN_INTERVAL_MS", "1100")) / 1000
+        self.cooldown = float(os.getenv("MISTRAL_RATE_COOLDOWN_MS", "600000")) / 1000
+        self.logger = logging.getLogger(__name__)
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+    def candidate_models(self) -> List[str]:
+        cls = MistralClient
+        ordered = ([cls._working] if cls._working else []) + ([self.pinned] if self.pinned else []) + MODELS
+        usable = [m for m in dict.fromkeys(ordered) if m not in cls._denied]
+        now = time.time()
+        ready = [m for m in usable if cls._cooling_until.get(m, 0) <= now]
+        # Everything cooling down: try anyway rather than fail without asking.
+        return ready or usable
+
+    def complete_json(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int = 900) -> Dict[str, Any]:
+        if not self.enabled:
+            raise LlmUnavailable("MISTRAL_API_KEY is not set")
+        cls = MistralClient
+        models = self.candidate_models()
+        if not models:
+            raise LlmUnavailable("no Mistral model is available for this API key")
+        for model in models:
+            status, data = self._post(model, messages, temperature, max_tokens)
+            if status == 429:
+                time.sleep(1.5)
+                status, data = self._post(model, messages, temperature, max_tokens)
+            if status == 200:
+                if cls._working != model:
+                    self.logger.info("using Mistral model %s", model)
+                cls._working = model
+                text = data["choices"][0]["message"]["content"]
+                parsed = parse_json_object(text if isinstance(text, str) else "")
+                if parsed is None:
+                    raise LlmUnavailable("unreadable model output")
+                return parsed
+            if status == 401:
+                raise LlmUnavailable("MISTRAL_API_KEY was rejected (401)")
+            if status in (403, 404):
+                self.logger.warning("Mistral model %s not available for this key, trying the next one", model)
+                cls._denied.add(model)
+            elif status == 429:
+                self.logger.warning("Mistral model %s is rate limited, trying the next one", model)
+                cls._cooling_until[model] = time.time() + self.cooldown
+            else:
+                raise LlmUnavailable(f"Mistral returned {status}")
+            if cls._working == model:
+                cls._working = None
+        raise LlmUnavailable("all Mistral models refused the request")
+
+    def _post(self, model: str, messages, temperature: float, max_tokens: int):
+        self._wait_for_slot()
+        try:
+            resp = requests.post(
+                API_URL,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise LlmUnavailable(f"Mistral request failed: {exc}") from exc
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {}
+        return resp.status_code, data
+
+    def _wait_for_slot(self):
+        cls = MistralClient
+        with cls._lock:
+            wait = cls._last_start + self.min_interval - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            cls._last_start = time.time()
+
+
+def parse_json_object(text: str) -> Optional[Dict[str, Any]]:
+    """Parse a JSON object out of model text (tolerates code fences / leading prose)."""
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if fenced:
+        candidate = fenced.group(1)
+    else:
+        braces = re.search(r"\{[\s\S]*\}", text)
+        candidate = braces.group(0) if braces else text
+    try:
+        value = json.loads(candidate)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+class PostWriter:
+    """Turns an article into a channel post (title + short summary) in the target language."""
+
+    def __init__(self, client: Optional[MistralClient] = None):
+        self.client = client or MistralClient()
+        self.logger = logging.getLogger(__name__)
+
+    @property
+    def enabled(self) -> bool:
+        return self.client.enabled
+
+    def write(self, title: str, text: str, source_language: str, target_language: str) -> Optional[Dict[str, Any]]:
+        """Returns {"title", "summary", "summary_en"}, {"skip": True} for non-news, or None on failure.
+
+        Output that fails the language checks is retried once (sampling differs per call).
+        """
+        for _ in range(2):
+            result = self._write_once(title, text, source_language, target_language)
+            if result != "retry":
+                return result
+        return None
+
+    def _write_once(self, title: str, text: str, source_language: str, target_language: str):
+        target_name = LANGUAGE_NAMES.get(target_language, target_language)
+        system = (
+            f"You are the editor of a {target_name} news channel on Telegram. "
+            f"Given a news article in any language, write a post in {target_name}.\n"
+            "Rules:\n"
+            "- title: a short, clear headline. No outlet name, no clickbait.\n"
+            "- summary: 2-3 short sentences, at most 60 words, with the key facts (who, what, where). "
+            "Neutral tone; no opinions or speculation.\n"
+            "- Accuracy first: only facts stated in the article. Keep numbers, titles and roles exactly "
+            "as written (hundreds stays hundreds, First Lady stays First Lady). Do not add dates, "
+            "places or background the article does not give.\n"
+            f"- Write names of people, places and organisations the way {target_name} news media "
+            "normally spell them (e.g. BBC Persian / DW Farsi for Persian), not in Latin letters.\n"
+            "- summary_en: the same summary in English.\n"
+            'Reply with JSON only: {"title": "...", "summary": "...", "summary_en": "..."}.\n'
+            "Features, analysis and interviews count as news. "
+            'Only if the text is not journalism at all (an ad, a video page with no text, a live ticker, '
+            'a newsletter teaser), reply {"skip": true}.'
+        )
+        user = f"Article language: {source_language}\nTitle: {title}\n\nArticle text:\n{(text or title)[:4000]}"
+        try:
+            out = self.client.complete_json(
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                temperature=0.2,
+            )
+        except LlmUnavailable as exc:
+            self.logger.warning("post writer unavailable: %s", exc)
+            return None
+        if out.get("skip") is True:
+            return {"skip": True}
+        post_title = str(out.get("title") or "").strip()
+        summary = str(out.get("summary") or "").strip()
+        if not post_title or not summary:
+            self.logger.warning("post writer returned incomplete output")
+            return "retry"
+        if target_language == "fa":
+            both = f"{post_title} {summary}"
+            if not PERSIAN_CHARS.search(summary):
+                self.logger.warning("post writer answered in the wrong language")
+                return "retry"
+            if FOREIGN_SCRIPT.search(both) or MIXED_WORD.search(both):
+                self.logger.warning("post writer mixed scripts: %s", post_title)
+                return "retry"
+        return {"title": post_title, "summary": summary, "summary_en": str(out.get("summary_en") or "").strip()}

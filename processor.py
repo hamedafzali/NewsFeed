@@ -1,20 +1,36 @@
-"""News processor: fetches articles via the v3 pipeline, translates summaries to the
-channel's target language, and posts them to Telegram.
+"""News processor: fetches articles via the v3 pipeline, writes posts in the channel's
+language, and sends them to Telegram.
 
 This is the delivery layer the panel and scheduler drive — one bot = one Telegram
 channel with its own token, chat id, language, and feed list.
 """
 import logging
+import os
+import re
 import time
+from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from math import exp
 from typing import Any, Dict, List, Optional
 
 import database as db
 from news_platform.config import get_settings
 from news_platform.pipeline import NewsPipeline
+from news_platform.pipeline.ingestion import strip_publisher_suffix
+from news_platform.pipeline.llm import PostWriter
+from news_platform.pipeline.ranking import age_hours
 from news_platform.pipeline.translation import Translator
 from news_platform.publishing import TelegramPublisher
 from news_platform.storage import SQLiteStore
+
+# Pages that aren't articles: aggregator redirects (their "summary" is a list of
+# other outlets' headlines), videos, audio, and live tickers.
+NOT_POSTABLE_URL = re.compile(
+    r"news\.google\.com|/(videos?|live|av|audio|podcasts?|multimedia)/|/(video|live)-\d", re.I
+)
+# Below this the RSS description is just a teaser; fetch the page for the post writer.
+MIN_TEXT_FOR_SUMMARY = 600
 
 
 @dataclass
@@ -28,7 +44,7 @@ class NewsResult:
 
 
 class NewsProcessor:
-    """Runs the fetch → translate → post flow for a single bot/channel."""
+    """Runs the fetch → write → post flow for a single bot/channel."""
 
     def __init__(self, bot_config: Dict[str, Any]):
         self.config = bot_config
@@ -36,6 +52,8 @@ class NewsProcessor:
         self.store = SQLiteStore(self.settings.data_dir)
         self.pipeline = NewsPipeline(self.settings, self.store)
         self.translator = Translator()
+        self.writer = PostWriter()
+        self.max_age_hours = float(os.getenv("MAX_ARTICLE_AGE_HOURS", "36"))
         self.logger = logging.getLogger(__name__)
         self.publisher = None
         if bot_config.get("bot_token") and bot_config.get("telegram_chat_id"):
@@ -43,22 +61,23 @@ class NewsProcessor:
 
     def process_news(self) -> NewsResult:
         started = time.time()
-        max_posts = int(self.config.get("max_posts_per_run", 5))
+        max_posts = int(self.config.get("max_posts_per_run", 2))
         try:
             result = self.pipeline.refresh(
                 query=self.config.get("city_name", ""),
                 language=self.config.get("news_language", "en"),
                 country=self.config.get("country_code", "US"),
-                limit=min(max(max_posts * 4, 20), 60),
+                limit=60,
                 skip_web=bool(self.config.get("skip_scraping", True)),
                 translate=False,
                 sources=self._sources(),
             )
-            candidates = self._candidates(result)
+            bot_id = self._bot_id()
+            candidates = self._candidates(result, self._recent_titles(bot_id))
             posted = 0
+            attempts = 0
             consecutive_failures = 0
             out_articles: List[Dict[str, Any]] = []
-            bot_id = self._bot_id()
 
             for article in candidates:
                 if self.publisher and consecutive_failures >= 3:
@@ -68,7 +87,12 @@ class NewsProcessor:
                 if self.publisher and posted < max_posts:
                     if bot_id is not None and db.has_posted(bot_id, article["url"]):
                         continue
+                    if attempts >= max_posts * 3:
+                        break
+                    attempts += 1
                     data = self._enrich_summaries(article)
+                    if data is None:
+                        continue  # post writer judged it not a news story
                     send = self.publisher.send_article(
                         title=data["post_title"],
                         summary=data["post_summary"],
@@ -113,20 +137,72 @@ class NewsProcessor:
             self.logger.exception("process_news failed")
             return NewsResult(status="error", error_message=str(exc), duration=time.time() - started)
 
-    def _candidates(self, result) -> List[Dict[str, Any]]:
-        """Fresh pipeline articles plus recently stored ones (retries failed sends),
-        best quality first."""
+    def _candidates(self, result, recent_titles: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Recent, postable articles (fresh from this run plus stored ones, which
+        covers retries of failed sends), newest and richest first, one per story."""
+        now = datetime.now(timezone.utc)
         articles = {a.url: a.to_dict() for a in result.articles}
-        for stored in self.store.list_articles({"limit": 50}):
+        since = (now - timedelta(hours=self.max_age_hours + 24)).strftime("%Y-%m-%d %H:%M:%S")
+        for stored in self.store.list_articles({"limit": 500, "created_after": since}):
             articles.setdefault(stored["url"], stored)
-        return sorted(articles.values(), key=lambda a: a.get("quality_score") or 0, reverse=True)
 
-    def _enrich_summaries(self, article: Dict[str, Any]) -> Dict[str, Any]:
-        """Build English + target-language summaries for one article."""
+        scored = []
+        for article in articles.values():
+            if NOT_POSTABLE_URL.search(article.get("url") or ""):
+                continue
+            hours = age_hours(article.get("published_at"), now)
+            # Undated items can't be proven fresh; skipping them avoids reposting old news.
+            if hours is None or hours > self.max_age_hours:
+                continue
+            article = dict(article)
+            article["title"] = strip_publisher_suffix(article["title"], article.get("source_name"))
+            score = 0.65 * exp(-hours / 12) + 0.35 * (article.get("quality_score") or 0)
+            scored.append((score, article))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        # Each further article from the same outlet counts for less, so a feed that
+        # updates every few minutes doesn't fill the channel on its own.
+        per_source: Counter = Counter()
+        diversified = []
+        for score, article in scored:
+            diversified.append((score * 0.8 ** per_source[article.get("source_name")], article))
+            per_source[article.get("source_name")] += 1
+        diversified.sort(key=lambda item: item[0], reverse=True)
+        return drop_same_story([a for _, a in diversified], recent_titles or [])
+
+    def _recent_titles(self, bot_id: Optional[int]) -> List[str]:
+        if bot_id is None:
+            return []
+        return [p["title"] for p in db.get_posts(bot_id=bot_id, limit=200) if p.get("posted")]
+
+    def _enrich_summaries(self, article: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Build English + target-language title/summary for one article.
+
+        Uses the Mistral post writer when MISTRAL_API_KEY is set, otherwise (or if
+        it fails) machine-translates the RSS teaser. Returns None for non-news.
+        """
         target = self.config.get("target_language", "fa")
         source_lang = article.get("language") or "en"
         title = article["title"]
         base_summary = (article.get("summary") or {}).get("tldr") or title
+
+        if self.writer.enabled:
+            text = article.get("text") or base_summary
+            if len(text) < MIN_TEXT_FOR_SUMMARY:
+                page_text = self.pipeline.extractor.fetch_text(article["url"])
+                if len(page_text) > len(text):
+                    text = page_text
+            written = self.writer.write(title, text, source_lang, target)
+            if written and written.get("skip"):
+                return None
+            if written:
+                data = dict(article)
+                data["summary_en"] = written["summary_en"] or (base_summary if source_lang == "en" else "")
+                data["summary_target"] = written["summary"]
+                data["summary_fa"] = written["summary"] if target == "fa" else ""
+                data["post_title"] = written["title"]
+                data["post_summary"] = written["summary"]
+                data["posted"] = False
+                return data
 
         summary_en = base_summary if source_lang == "en" else self.translator.translate(base_summary, source_lang, "en")
         if target == "en":
@@ -180,6 +256,25 @@ class NewsProcessor:
         return {}
 
 
+def _title_tokens(title: str) -> set:
+    return set(re.findall(r"\w{3,}", (title or "").lower()))
+
+
+def drop_same_story(articles: List[Dict[str, Any]], recent_titles: List[str], threshold: float = 0.5) -> List[Dict[str, Any]]:
+    """Keep the first (best-ranked) article per story; drop ones whose title overlaps
+    an earlier pick or a recent post by at least `threshold` (Jaccard of title words)."""
+    kept: List[Dict[str, Any]] = []
+    seen = [t for t in (_title_tokens(title) for title in recent_titles) if t]
+    for article in articles:
+        tokens = _title_tokens(article["title"])
+        if tokens and any(len(tokens & other) / len(tokens | other) >= threshold for other in seen):
+            continue
+        kept.append(article)
+        if tokens:
+            seen.append(tokens)
+    return kept
+
+
 def run_bot(bot: Dict[str, Any]) -> NewsResult:
     """Run the full pipeline for a bot row from the panel database.
 
@@ -200,7 +295,7 @@ def run_bot(bot: Dict[str, Any]) -> NewsResult:
         "country_code": bot["country_code"],
         "news_language": bot.get("news_language", "en"),
         "target_language": bot.get("target_language", "fa"),
-        "max_posts_per_run": bot.get("max_posts_per_run", 5),
+        "max_posts_per_run": bot.get("max_posts_per_run", 2),
         "sources": sources,
     }
     started = time.time()

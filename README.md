@@ -22,9 +22,15 @@ If `API_KEY` is set, all `/api/v1/*` endpoints require `X-API-Key`. (`API_KEY` i
 
 1. Create a bot with @BotFather, copy its token.
 2. Add the bot as **administrator** to your channel (with "Post messages" permission).
-3. Open the panel → Add Bot: set city/country, source language (feeds), channel language (fa/en/de — summaries are translated, de→fa goes via English), token, and the channel `@username` or `-100…` chat id.
+3. Open the panel → Add Bot: set city/country, source language (feeds), channel language (fa/en/de), token, and the channel `@username` or `-100…` chat id.
 4. Click **Test** (verifies token *and* channel access), then **Run**.
 5. Set `SCHEDULE_INTERVAL_MINUTES` (default 30) to post automatically; already-posted articles are never re-sent per channel.
+
+Each run takes items from every active feed in turn, keeps only articles published within `MAX_ARTICLE_AGE_HOURS` (default 36), drops Google News redirects, videos and live tickers, ranks newest-first, and posts one article per story (titles overlapping an earlier pick or a recent post are skipped).
+
+### Post writing (optional Mistral)
+
+Set `MISTRAL_API_KEY` in the deployment environment (e.g. the container manager's project variables) to have Mistral write each post: a short headline and 2–3 sentence summary in the channel language, from the full article text. `MISTRAL_MODEL` pins a model; empty picks the best one the key can use and skips models that are out of quota. Without a key, or if Mistral fails, posts fall back to translating the RSS teaser with LibreTranslate/MyMemory. API keys are never entered in the panel.
 
 ## API
 

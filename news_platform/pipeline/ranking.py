@@ -1,8 +1,32 @@
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from math import exp
+from typing import Optional
 
 from news_platform.models import ExtractedArticle
+
+
+def parse_published(value: Optional[str]) -> Optional[datetime]:
+    """Parse a feed date: RFC 2822 (RSS) or ISO 8601 (Atom/RDF, e.g. DW). None if unparseable."""
+    if not value:
+        return None
+    value = value.strip()
+    try:
+        dt = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def age_hours(published_at: Optional[str], now: Optional[datetime] = None) -> Optional[float]:
+    dt = parse_published(published_at)
+    if dt is None:
+        return None
+    now = now or datetime.now(timezone.utc)
+    return max(0.0, (now - dt).total_seconds() / 3600)
 
 
 class RankingEngine:
@@ -16,13 +40,7 @@ class RankingEngine:
         return min(relevance, 1.0), min(quality, 1.0)
 
     def _freshness(self, published_at: str | None) -> float:
-        if not published_at:
+        hours = age_hours(published_at)
+        if hours is None:
             return 0.55
-        try:
-            dt = parsedate_to_datetime(published_at)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            hours = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 3600)
-            return max(0.05, exp(-hours / 72))
-        except Exception:
-            return 0.55
+        return max(0.05, exp(-hours / 72))

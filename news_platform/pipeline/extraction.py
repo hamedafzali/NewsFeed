@@ -47,6 +47,14 @@ class ContentExtractor:
             extraction_quality=quality,
         )
 
+    def fetch_text(self, url: str) -> str:
+        """Clean full text of the article page, or "" if it can't be fetched."""
+        try:
+            html = self._fetch_html(url)
+        except requests.RequestException:
+            return ""
+        return self._clean_text(self._html_to_text(html)) if html else ""
+
     def _fetch_html(self, url: str) -> str:
         if not url or "news.google.com" in url:
             return ""

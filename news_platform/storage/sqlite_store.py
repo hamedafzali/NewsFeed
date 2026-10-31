@@ -256,6 +256,10 @@ class SQLiteStore:
         if filters.get("min_quality") is not None:
             clauses.append("quality_score >= ?")
             params.append(float(filters["min_quality"]))
+        if filters.get("created_after"):
+            # created_at is SQLite CURRENT_TIMESTAMP ("YYYY-MM-DD HH:MM:SS", UTC), so it compares as text.
+            clauses.append("created_at >= ?")
+            params.append(filters["created_after"])
         sql = "SELECT * FROM articles"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)

@@ -53,9 +53,9 @@ def init_db():
                 target_language TEXT NOT NULL DEFAULT 'fa',
                 bot_token TEXT NOT NULL,
                 telegram_chat_id TEXT NOT NULL,
-                openai_api_key TEXT,
-                newsapi_key TEXT,
-                max_posts_per_run INTEGER NOT NULL DEFAULT 5,
+                openai_api_key TEXT,  -- unused; kept so existing panel.db files still match
+                newsapi_key TEXT,     -- unused
+                max_posts_per_run INTEGER NOT NULL DEFAULT 2,
                 custom_feeds TEXT,
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -108,13 +108,12 @@ def add_bot(config: Dict[str, Any]) -> int:
         cur = c.execute(
             """INSERT INTO bots
                (name, city_name, country_code, news_language, target_language, bot_token,
-                telegram_chat_id, openai_api_key, newsapi_key, max_posts_per_run, custom_feeds, active)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                telegram_chat_id, max_posts_per_run, custom_feeds, active)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (
                 config["name"], config["city_name"], config["country_code"],
                 config.get("news_language", "en"), config.get("target_language", "fa"),
-                config["bot_token"], config["telegram_chat_id"], config.get("openai_api_key"),
-                config.get("newsapi_key"), config.get("max_posts_per_run", 5),
+                config["bot_token"], config["telegram_chat_id"], config.get("max_posts_per_run", 2),
                 config.get("custom_feeds"), 1 if config.get("active", True) else 0,
             ),
         )
@@ -148,8 +147,7 @@ def get_bot(bot_id: int) -> Optional[Dict]:
 
 def update_bot(bot_id: int, config: Dict[str, Any]):
     fields = ["name", "city_name", "country_code", "news_language", "target_language",
-              "bot_token", "telegram_chat_id", "openai_api_key", "newsapi_key",
-              "max_posts_per_run", "custom_feeds", "active"]
+              "bot_token", "telegram_chat_id", "max_posts_per_run", "custom_feeds", "active"]
     updates = {k: config[k] for k in fields if k in config}
     if not updates:
         return

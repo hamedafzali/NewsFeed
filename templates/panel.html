@@ -159,7 +159,6 @@
         <div class="col-md-2"><label class="form-label small fw-semibold">Country Code</label><input type="text" class="form-control" id="prev-country" placeholder="DE" value="DE" maxlength="2"></div>
         <div class="col-md-2"><label class="form-label small fw-semibold">Language</label><input type="text" class="form-control" id="prev-lang" placeholder="de" value="de" maxlength="5"></div>
         <div class="col-md-2"><label class="form-label small fw-semibold">Max Results</label><input type="number" class="form-control" id="prev-max" value="5" min="1" max="20"></div>
-        <div class="col-md-3"><label class="form-label small fw-semibold">OpenAI Key (optional)</label><input type="password" class="form-control" id="prev-openai" placeholder="sk-..."></div>
       </div>
       <div class="mt-3">
         <button class="btn btn-primary" id="preview-btn" onclick="runPreview()"><i class="bi bi-search me-1"></i>Fetch News</button>
@@ -306,18 +305,15 @@
               <option value="de">German</option>
             </select>
           </div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Max Posts/Run</label><input type="number" class="form-control" id="bot-maxposts" value="5" min="1" max="20"></div>
+          <div class="col-md-3"><label class="form-label small fw-semibold">Max Posts/Run</label><input type="number" class="form-control" id="bot-maxposts" value="2" min="1" max="20"></div>
           <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">Telegram</h6></div>
           <div class="col-md-7"><label class="form-label small fw-semibold">Bot Token *</label><input type="password" class="form-control" id="bot-token" placeholder="1234567890:ABC..."></div>
           <div class="col-md-5"><label class="form-label small fw-semibold">Chat ID *</label><input type="text" class="form-control" id="bot-chatid" placeholder="-100123456789"></div>
-          <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">API Keys (optional)</h6></div>
-          <div class="col-md-6"><label class="form-label small fw-semibold">OpenAI API Key</label><input type="password" class="form-control" id="bot-openai" placeholder="sk-..."></div>
-          <div class="col-md-6"><label class="form-label small fw-semibold">NewsAPI Key</label><input type="password" class="form-control" id="bot-newsapi" placeholder="..."></div>
           <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">Custom RSS Feeds (optional)</h6></div>
           <div class="col-12">
             <label class="form-label small fw-semibold">RSS Feed URLs</label>
             <textarea class="form-control font-monospace" id="bot-feeds" rows="4" placeholder="One URL per line, e.g.:&#10;https://rss.dw.com/rdf/rss-en-all&#10;https://feeds.bbci.co.uk/news/rss.xml&#10;https://www.tagblatt.de/rss/feed/"></textarea>
-            <div class="form-text">One RSS/Atom URL per line. These are fetched in addition to Google News.</div>
+            <div class="form-text">One RSS/Atom URL per line. These are fetched in addition to the global feeds.</div>
           </div>
           <div class="col-12 d-flex align-items-center gap-2">
             <div class="form-check form-switch">
@@ -556,11 +552,9 @@ function openBotModal(bot = null) {
   document.getElementById('bot-country').value = bot?.country_code || '';
   document.getElementById('bot-lang').value = bot?.news_language || 'en';
   document.getElementById('bot-target-lang').value = bot?.target_language || 'fa';
-  document.getElementById('bot-maxposts').value = bot?.max_posts_per_run || 5;
+  document.getElementById('bot-maxposts').value = bot?.max_posts_per_run || 2;
   document.getElementById('bot-token').value = '';
   document.getElementById('bot-chatid').value = bot?.telegram_chat_id || '';
-  document.getElementById('bot-openai').value = '';
-  document.getElementById('bot-newsapi').value = '';
   document.getElementById('bot-feeds').value = bot?.custom_feeds || '';
   document.getElementById('bot-active').checked = bot ? !!bot.active : true;
   new bootstrap.Modal(document.getElementById('bot-modal')).show();
@@ -585,10 +579,6 @@ async function saveBot() {
   };
   const token = document.getElementById('bot-token').value;
   if (token) data.bot_token = token;
-  const openai = document.getElementById('bot-openai').value;
-  if (openai) data.openai_api_key = openai;
-  const newsapi = document.getElementById('bot-newsapi').value;
-  if (newsapi) data.newsapi_key = newsapi;
   const feeds = document.getElementById('bot-feeds').value.trim();
   if (feeds) data.custom_feeds = feeds;
 
@@ -667,7 +657,7 @@ async function runPreview() {
     [0,  5,  'Fetching RSS feeds…',         'Connecting to sources'],
     [4,  20, 'Extracting article content…',  'Resolving URLs and scraping pages'],
     [10, 45, 'Checking relevance…',          'Filtering articles for your city'],
-    [20, 70, 'Summarising with AI…',         'Ollama is generating summaries'],
+    [20, 70, 'Summarising…',                 'Building article summaries'],
     [40, 85, 'Translating to Persian…',      'MyMemory / LibreTranslate running'],
     [60, 95, 'Almost done…',                 'Finalising results'],
   ];
@@ -688,8 +678,6 @@ async function runPreview() {
     news_language: document.getElementById('prev-lang').value,
     max_results: parseInt(document.getElementById('prev-max').value),
   };
-  const openai = document.getElementById('prev-openai').value;
-  if (openai) body.openai_api_key = openai;
 
   const stopProgress = () => {
     clearInterval(ticker);
@@ -754,8 +742,9 @@ async function loadSettings() {
   const s = await api('/panel/api/settings');
   const labels = {
     LIBRETRANSLATE_URL: 'LibreTranslate URL',
-    OLLAMA_BASE_URL: 'Ollama Base URL',
-    OLLAMA_MODEL: 'Ollama Model',
+    AI_POST_WRITER: 'AI Post Writer',
+    MISTRAL_MODEL: 'Mistral Model',
+    MAX_ARTICLE_AGE_HOURS: 'Max Article Age (hours)',
     SCHEDULE_INTERVAL_MINUTES: 'Auto-run Interval (minutes)',
     DATA_DIR: 'Data Directory',
     SERVICE_PORT: 'Service Port',

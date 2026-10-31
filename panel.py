@@ -207,8 +207,9 @@ def save_app_settings():
 def settings():
     return jsonify({
         "LIBRETRANSLATE_URL": os.getenv("LIBRETRANSLATE_URL", ""),
-        "OLLAMA_BASE_URL": os.getenv("OLLAMA_BASE_URL", ""),
-        "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL", ""),
+        "AI_POST_WRITER": "Mistral" if os.getenv("MISTRAL_API_KEY") else "off (set MISTRAL_API_KEY)",
+        "MISTRAL_MODEL": os.getenv("MISTRAL_MODEL", "") or ("auto" if os.getenv("MISTRAL_API_KEY") else ""),
+        "MAX_ARTICLE_AGE_HOURS": os.getenv("MAX_ARTICLE_AGE_HOURS", "36"),
         "SCHEDULE_INTERVAL_MINUTES": os.getenv("SCHEDULE_INTERVAL_MINUTES", "0"),
         "DATA_DIR": os.getenv("DATA_DIR", "./data"),
         "SERVICE_PORT": os.getenv("SERVICE_PORT", "8003"),
