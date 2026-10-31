@@ -196,16 +196,33 @@ def test_post_writer_rejects_wrong_language(monkeypatch):
     assert writer.write("t", "text", "de", "fa") == {"skip": True}
 
 
-def test_post_writer_retries_mixed_script_output(monkeypatch):
+def test_post_writer_sends_back_mixed_script_output(monkeypatch):
     writer = PostWriter(MistralClient(api_key="k"))
     replies = iter([
         {"title": "چिप‌های مغزی", "summary": "متن خبر", "summary_en": "x"},  # Devanagari slipped in
         {"title": "تراشه‌های مغزی", "summary": "شهر اوleshky", "summary_en": "x"},  # half-translated name
-        {"title": "تراشه‌های مغزی", "summary": "متن خبر درباره BCI", "summary_en": "x"},
+        {"title": "تراشه‌های مغزی", "summary": "از Hals به پایین", "summary_en": "x"},  # untranslated word
+        {"title": "تراشه‌های مغزی", "summary": "شهر اولشکی و (BCI)، ناتو", "summary_en": "x"},  # acronym is fine
     ])
-    monkeypatch.setattr(writer.client, "complete_json", lambda *a, **k: next(replies))
-    assert writer.write("t", "text", "de", "fa") is None  # two bad answers -> give up
-    assert writer.write("t", "text", "de", "fa")["title"] == "تراشه‌های مغزی"  # standalone acronym is fine
+    seen = []
+
+    def fake(messages, **kwargs):
+        seen.append(messages[-1]["content"])
+        return next(replies)
+
+    monkeypatch.setattr(writer.client, "complete_json", fake)
+    assert writer.write("t", "text", "de", "fa") is None  # three bad answers
+    assert "اوleshky" in seen[2]  # the model is told which word to fix
+    assert writer.write("t", "text", "de", "fa")["summary"] == "شهر اولشکی و (BCI)، ناتو"
+
+
+def test_post_writer_gives_up_after_three_bad_answers(monkeypatch):
+    writer = PostWriter(MistralClient(api_key="k"))
+    calls = []
+    monkeypatch.setattr(writer.client, "complete_json",
+                        lambda *a, **k: calls.append(1) or {"title": "x", "summary": "شهر اوleshky"})
+    assert writer.write("t", "text", "de", "fa") is None
+    assert len(calls) == 3
 
 
 def test_enrich_uses_writer_and_falls_back_to_translator(monkeypatch):
@@ -230,9 +247,9 @@ def test_enrich_uses_writer_and_falls_back_to_translator(monkeypatch):
     monkeypatch.setattr(processor.writer, "write", lambda *a: {"skip": True})
     assert processor._enrich_summaries(article) is None
 
-    # Writer fails: fall back to translation.
+    # Writer fails: skip rather than post a machine translation.
     monkeypatch.setattr(processor.writer, "write", lambda *a: None)
-    assert processor._enrich_summaries(article)["post_title"] == "[fa]Brücke gesperrt"
+    assert processor._enrich_summaries(article) is None
 
 
 def test_bot_api_ignores_removed_key_fields():

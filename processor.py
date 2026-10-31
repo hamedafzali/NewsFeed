@@ -177,8 +177,9 @@ class NewsProcessor:
     def _enrich_summaries(self, article: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Build English + target-language title/summary for one article.
 
-        Uses the Mistral post writer when MISTRAL_API_KEY is set, otherwise (or if
-        it fails) machine-translates the RSS teaser. Returns None for non-news.
+        Uses the Mistral post writer when MISTRAL_API_KEY is set, otherwise
+        machine-translates the RSS teaser. Returns None when the article should
+        not be posted (writer judged it non-news or couldn't write a clean post).
         """
         target = self.config.get("target_language", "fa")
         source_lang = article.get("language") or "en"
@@ -192,17 +193,18 @@ class NewsProcessor:
                 if len(page_text) > len(text):
                     text = page_text
             written = self.writer.write(title, text, source_lang, target)
-            if written and written.get("skip"):
+            # No clean post (or not news): skip it. Machine translation of the
+            # teaser is too unreliable for Persian to stand in for the writer.
+            if not written or written.get("skip"):
                 return None
-            if written:
-                data = dict(article)
-                data["summary_en"] = written["summary_en"] or (base_summary if source_lang == "en" else "")
-                data["summary_target"] = written["summary"]
-                data["summary_fa"] = written["summary"] if target == "fa" else ""
-                data["post_title"] = written["title"]
-                data["post_summary"] = written["summary"]
-                data["posted"] = False
-                return data
+            data = dict(article)
+            data["summary_en"] = written["summary_en"] or (base_summary if source_lang == "en" else "")
+            data["summary_target"] = written["summary"]
+            data["summary_fa"] = written["summary"] if target == "fa" else ""
+            data["post_title"] = written["title"]
+            data["post_summary"] = written["summary"]
+            data["posted"] = False
+            return data
 
         summary_en = base_summary if source_lang == "en" else self.translator.translate(base_summary, source_lang, "en")
         if target == "en":

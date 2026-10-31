@@ -26,6 +26,9 @@ PERSIAN_CHARS = re.compile(r"[؀-ۿ]")
 FOREIGN_SCRIPT = re.compile(r"[ऀ-෿Ѐ-ӿ぀-ヿ一-鿿]")
 # A Latin fragment glued to Persian letters ("اوleshky") is a half-translated name.
 MIXED_WORD = re.compile(r"[؀-ۿ][A-Za-z]|[A-Za-z][؀-ۿ]")
+# Whole Latin words left untranslated ("Hals", "Interface"); acronyms like BCI/NATO are fine.
+LATIN_WORD = re.compile(r"^(?![A-Z0-9]{2,6}$)[A-Za-z][A-Za-z'-]*$")
+PUNCTUATION = "،؛؟«»()[]\"'.,:;!?…"
 
 
 class LlmUnavailable(Exception):
@@ -158,15 +161,8 @@ class PostWriter:
     def write(self, title: str, text: str, source_language: str, target_language: str) -> Optional[Dict[str, Any]]:
         """Returns {"title", "summary", "summary_en"}, {"skip": True} for non-news, or None on failure.
 
-        Output that fails the language checks is retried once (sampling differs per call).
+        Output that fails the checks is sent back with what was wrong, up to twice.
         """
-        for _ in range(2):
-            result = self._write_once(title, text, source_language, target_language)
-            if result != "retry":
-                return result
-        return None
-
-    def _write_once(self, title: str, text: str, source_language: str, target_language: str):
         target_name = LANGUAGE_NAMES.get(target_language, target_language)
         system = (
             f"You are the editor of a {target_name} news channel on Telegram. "
@@ -187,27 +183,39 @@ class PostWriter:
             'a newsletter teaser), reply {"skip": true}.'
         )
         user = f"Article language: {source_language}\nTitle: {title}\n\nArticle text:\n{(text or title)[:4000]}"
-        try:
-            out = self.client.complete_json(
-                [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                temperature=0.2,
-            )
-        except LlmUnavailable as exc:
-            self.logger.warning("post writer unavailable: %s", exc)
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        for _ in range(3):
+            try:
+                out = self.client.complete_json(messages, temperature=0.2)
+            except LlmUnavailable as exc:
+                self.logger.warning("post writer unavailable: %s", exc)
+                return None
+            if out.get("skip") is True:
+                return {"skip": True}
+            post = {key: str(out.get(key) or "").strip() for key in ("title", "summary", "summary_en")}
+            problem = self._problem(post, target_language, target_name)
+            if not problem:
+                return post
+            self.logger.warning("post writer output rejected (%s): %s", problem, post["title"])
+            messages += [
+                {"role": "assistant", "content": json.dumps(out, ensure_ascii=False)},
+                {"role": "user", "content": f"{problem} Reply with the corrected JSON."},
+            ]
+        return None
+
+    @staticmethod
+    def _problem(post: Dict[str, str], target_language: str, target_name: str) -> Optional[str]:
+        """What is wrong with a post, phrased as feedback to the model; None if it is fine."""
+        if not post["title"] or not post["summary"]:
+            return "The title or summary is missing."
+        if target_language != "fa":
             return None
-        if out.get("skip") is True:
-            return {"skip": True}
-        post_title = str(out.get("title") or "").strip()
-        summary = str(out.get("summary") or "").strip()
-        if not post_title or not summary:
-            self.logger.warning("post writer returned incomplete output")
-            return "retry"
-        if target_language == "fa":
-            both = f"{post_title} {summary}"
-            if not PERSIAN_CHARS.search(summary):
-                self.logger.warning("post writer answered in the wrong language")
-                return "retry"
-            if FOREIGN_SCRIPT.search(both) or MIXED_WORD.search(both):
-                self.logger.warning("post writer mixed scripts: %s", post_title)
-                return "retry"
-        return {"title": post_title, "summary": summary, "summary_en": str(out.get("summary_en") or "").strip()}
+        if not PERSIAN_CHARS.search(post["summary"]):
+            return f"The summary must be written in {target_name}."
+        text = f"{post['title']} {post['summary']}"
+        words = [w.strip(PUNCTUATION) for w in text.split()]
+        bad = [w for w in words if FOREIGN_SCRIPT.search(w) or MIXED_WORD.search(w) or LATIN_WORD.match(w)]
+        if bad:
+            return (f"These words are not in Persian script: {', '.join(dict.fromkeys(bad))}. "
+                    "Write each one entirely in Persian letters (transliterate names, as BBC Persian would).")
+        return None
