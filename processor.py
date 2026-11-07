@@ -7,6 +7,7 @@ channel with its own token, chat id, language, and feed list.
 import logging
 import os
 import re
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -31,6 +32,15 @@ NOT_POSTABLE_URL = re.compile(
 )
 # Below this the RSS description is just a teaser; fetch the page for the post writer.
 MIN_TEXT_FOR_SUMMARY = 600
+# Same story if this share of the smaller English summary's key words appear in a
+# recent post's summary (measured on real posts: repeats >= 0.24, others <= 0.19).
+SAME_STORY_OVERLAP = 0.22
+SAME_STORY_WINDOW_HOURS = 72
+SUMMARY_STOPWORDS = set(
+    "that with from this have has after were was are will their they them about into over "
+    "more than been which said says also amid during before against while where when would "
+    "could other some most many what there these those since being just only".split()
+)
 
 
 @dataclass
@@ -61,11 +71,10 @@ class NewsProcessor:
 
     def process_news(self) -> NewsResult:
         started = time.time()
-        max_posts = int(self.config.get("max_posts_per_run", 2))
         try:
             result = self.pipeline.refresh(
                 query=self.config.get("city_name", ""),
-                language=self.config.get("news_language", "en"),
+                language=self._source_language() or "en",
                 country=self.config.get("country_code", "US"),
                 limit=60,
                 skip_web=bool(self.config.get("skip_scraping", True)),
@@ -73,6 +82,8 @@ class NewsProcessor:
                 sources=self._sources(),
             )
             bot_id = self._bot_id()
+            max_posts = self._post_budget(bot_id)
+            recent_summaries = self._recent_summaries(bot_id)
             candidates = self._candidates(result, self._recent_titles(bot_id))
             posted = 0
             attempts = 0
@@ -91,8 +102,18 @@ class NewsProcessor:
                         break
                     attempts += 1
                     data = self._enrich_summaries(article)
-                    if data is None:
-                        continue  # post writer judged it not a news story
+                    skip_reason = "no clean post / not news" if data is None else None
+                    if data is not None:
+                        repeat = same_story(data["summary_en"], recent_summaries)
+                        if repeat:
+                            skip_reason = f"same story as {repeat}"
+                    if skip_reason:
+                        self.logger.info("skipping %s: %s", article["url"], skip_reason)
+                        if bot_id is not None:
+                            db.log_post(bot_id=bot_id, title=article["title"], url=article["url"],
+                                        summary_en=(data or {}).get("summary_en", ""), summary_fa="",
+                                        posted=False, error=db.SKIPPED + skip_reason)
+                        continue
                     send = self.publisher.send_article(
                         title=data["post_title"],
                         summary=data["post_summary"],
@@ -117,6 +138,7 @@ class NewsProcessor:
                     if send.ok:
                         posted += 1
                         consecutive_failures = 0
+                        recent_summaries.append((article["title"], data["summary_en"]))
                     else:
                         consecutive_failures += 1
                 else:
@@ -146,9 +168,13 @@ class NewsProcessor:
         for stored in self.store.list_articles({"limit": 500, "created_after": since}):
             articles.setdefault(stored["url"], stored)
 
+        source_language = self._source_language()
         scored = []
         for article in articles.values():
             if NOT_POSTABLE_URL.search(article.get("url") or ""):
+                continue
+            # Global feeds are shared by all channels; each takes the ones in its language.
+            if source_language and article.get("language") != source_language:
                 continue
             hours = age_hours(article.get("published_at"), now)
             # Undated items can't be proven fresh; skipping them avoids reposting old news.
@@ -168,6 +194,33 @@ class NewsProcessor:
             per_source[article.get("source_name")] += 1
         diversified.sort(key=lambda item: item[0], reverse=True)
         return drop_same_story([a for _, a in diversified], recent_titles or [])
+
+    def _post_budget(self, bot_id: Optional[int]) -> int:
+        """How many posts this run may send.
+
+        With a daily limit, posts are spread out: at most one per run, and only once
+        ~24h/limit has passed since the last post (10% slack for the run interval).
+        """
+        per_run = int(self.config.get("max_posts_per_run") or 2)
+        per_day = int(self.config.get("max_posts_per_day") or 0)
+        if per_day <= 0 or bot_id is None:
+            return per_run
+        now = datetime.now(timezone.utc)
+        since = (now - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+        sent = db.get_sent_posts(bot_id, since)
+        if len(sent) >= per_day:
+            return 0
+        if sent:
+            last = datetime.strptime(sent[0]["posted_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            if now - last < timedelta(hours=24 / per_day * 0.9):
+                return 0
+        return 1
+
+    def _recent_summaries(self, bot_id: Optional[int]) -> List[tuple]:
+        if bot_id is None:
+            return []
+        since = (datetime.now(timezone.utc) - timedelta(hours=SAME_STORY_WINDOW_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+        return [(p["title"], p.get("summary_en") or "") for p in db.get_sent_posts(bot_id, since)]
 
     def _recent_titles(self, bot_id: Optional[int]) -> List[str]:
         if bot_id is None:
@@ -227,6 +280,10 @@ class NewsProcessor:
         data["posted"] = False
         return data
 
+    def _source_language(self) -> Optional[str]:
+        language = (self.config.get("news_language") or "").strip().lower()
+        return None if language in ("", "any") else language
+
     def _sources(self) -> Optional[List[Dict[str, Any]]]:
         sources = self.config.get("sources")
         return sources if sources else None
@@ -277,11 +334,48 @@ def drop_same_story(articles: List[Dict[str, Any]], recent_titles: List[str], th
     return kept
 
 
+def _summary_words(text: str) -> set:
+    return {w for w in re.findall(r"[a-zäöüß]{4,}", (text or "").lower()) if w not in SUMMARY_STOPWORDS}
+
+
+def same_story(summary_en: str, recent: List[tuple], threshold: float = SAME_STORY_OVERLAP) -> Optional[str]:
+    """Title of a recent post (title, summary_en) covering the same story, if any.
+
+    Compares English summaries, so it also catches the same story from outlets in
+    different languages, where the original titles share no words.
+    """
+    words = _summary_words(summary_en)
+    if len(words) < 5:
+        return None
+    for title, other_summary in recent:
+        other = _summary_words(other_summary)
+        if len(other) >= 5 and len(words & other) / min(len(words), len(other)) >= threshold:
+            return title
+    return None
+
+
+# One run per bot at a time: a manual Run during a scheduled run would otherwise
+# check the daily budget before either has posted and send twice as many.
+_run_locks: Dict[int, threading.Lock] = {}
+_run_locks_guard = threading.Lock()
+
+
 def run_bot(bot: Dict[str, Any]) -> NewsResult:
     """Run the full pipeline for a bot row from the panel database.
 
     Used by both the panel's manual Run button and the background scheduler.
     """
+    with _run_locks_guard:
+        lock = _run_locks.setdefault(bot["id"], threading.Lock())
+    if not lock.acquire(blocking=False):
+        return NewsResult(status="error", error_message="This bot is already running")
+    try:
+        return _run_bot(bot)
+    finally:
+        lock.release()
+
+
+def _run_bot(bot: Dict[str, Any]) -> NewsResult:
     sources = []
     for feed in db.get_global_feeds(active_only=True):
         sources.append({"url": feed["url"], "name": feed["name"],
@@ -298,6 +392,7 @@ def run_bot(bot: Dict[str, Any]) -> NewsResult:
         "news_language": bot.get("news_language", "en"),
         "target_language": bot.get("target_language", "fa"),
         "max_posts_per_run": bot.get("max_posts_per_run", 2),
+        "max_posts_per_day": bot.get("max_posts_per_day", 2),
         "sources": sources,
     }
     started = time.time()

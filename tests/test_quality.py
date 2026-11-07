@@ -261,3 +261,89 @@ def test_bot_api_ignores_removed_key_fields():
     bot = db.get_bot(bot_id)
     assert bot["openai_api_key"] is None and bot["newsapi_key"] is None
     assert bot["max_posts_per_run"] == 2
+
+
+# --- Posting cadence / repeats ---
+
+def _bot(**overrides):
+    config = {"name": "T", "city_name": "Tübingen", "country_code": "DE",
+              "bot_token": "1:a", "telegram_chat_id": "-100"}
+    config.update(overrides)
+    return db.add_bot(config)
+
+
+def _sent(bot_id, title, hours_ago, summary_en="", posted=True, error=None):
+    db.log_post(bot_id, title, f"https://x.test/{title}", summary_en, "", posted=posted, error=error)
+    stamp = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
+    with db._conn() as c:
+        c.execute("UPDATE posts SET posted_at = ? WHERE title = ?", (stamp, title))
+
+
+def test_new_bots_default_to_two_posts_per_day():
+    assert db.get_bot(_bot())["max_posts_per_day"] == 2
+
+
+def test_daily_budget_spreads_posts():
+    bot_id = _bot(max_posts_per_day=2)
+    processor = NewsProcessor({"bot_id": bot_id, "max_posts_per_day": 2, "max_posts_per_run": 5})
+    assert processor._post_budget(bot_id) == 1          # nothing posted yet: one now
+    _sent(bot_id, "a", hours_ago=3)
+    assert processor._post_budget(bot_id) == 0          # 3h ago, need ~12h between posts
+    _sent(bot_id, "a2", hours_ago=0, posted=False, error="telegram down")
+    assert processor._post_budget(bot_id) == 0          # failed sends don't count either way
+    with db._conn() as c:
+        c.execute("DELETE FROM posts")
+    _sent(bot_id, "b", hours_ago=11)
+    assert processor._post_budget(bot_id) == 1          # 11h > 0.9 * 12h
+    _sent(bot_id, "c", hours_ago=11.5)
+    assert processor._post_budget(bot_id) == 0          # two in the last 24h: done for today
+
+
+def test_no_daily_limit_uses_per_run_cap():
+    processor = NewsProcessor({"bot_id": 1, "max_posts_per_day": 0, "max_posts_per_run": 3})
+    assert processor._post_budget(1) == 3
+
+
+def test_same_story_across_languages():
+    from processor import same_story
+    recent = [
+        ("Hundreds evacuated from Russian-occupied Oleshky",
+         "Hundreds of residents left the devastated city of Oleshky after a ceasefire brokered by "
+         "US First Lady Melania Trump; they crossed into Ukraine via Belarus."),
+        ("Binance covers losses",
+         "Crypto firm Binance said it would cover 90 percent of customer losses after a hack."),
+    ]
+    tagesschau = ("Residents of Oleshky arrived in Ukrainian-controlled territory via Belarus "
+                  "after the ceasefire; Melania Trump had helped broker the evacuation.")
+    assert same_story(tagesschau, recent) == "Hundreds evacuated from Russian-occupied Oleshky"
+    other = "The UN Security Council failed to renew the Western Sahara peacekeeping mission after a Russian veto."
+    assert same_story(other, recent) is None
+
+
+def test_skipped_articles_are_not_retried():
+    bot_id = _bot()
+    _sent(bot_id, "dup", hours_ago=1, posted=False, error=db.SKIPPED + "same story as x")
+    _sent(bot_id, "failed", hours_ago=1, posted=False, error="telegram down")
+    assert db.has_posted(bot_id, "https://x.test/dup")
+    assert not db.has_posted(bot_id, "https://x.test/failed")  # failed sends are retried
+
+
+def test_run_bot_refuses_overlapping_runs(monkeypatch):
+    import processor as proc
+    bot = {"id": 42}
+    lock = proc._run_locks.setdefault(42, __import__("threading").Lock())
+    lock.acquire()
+    try:
+        assert proc.run_bot(bot).error_message == "This bot is already running"
+    finally:
+        lock.release()
+
+
+def test_candidates_keep_only_the_source_language(monkeypatch):
+    rows = [dict(_article("https://dw.test/de", "Bundestag beschließt Haushalt", 1), language="de"),
+            dict(_article("https://bbc.test/en", "Floods in Spain", 1), language="en")]
+    result = PipelineResult(articles=[_Stored(r) for r in rows])
+    for language, expected in (("de", ["https://dw.test/de"]), ("any", ["https://dw.test/de", "https://bbc.test/en"])):
+        processor = NewsProcessor({"bot_id": None, "news_language": language})
+        monkeypatch.setattr(processor.store, "list_articles", lambda filters: [])
+        assert sorted(a["url"] for a in processor._candidates(result)) == sorted(expected)
