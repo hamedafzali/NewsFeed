@@ -307,6 +307,8 @@
             </select>
           </div>
           <div class="col-md-3"><label class="form-label small fw-semibold">Posts per day</label><input type="number" class="form-control" id="bot-perday" value="2" min="0" max="100" title="Spread evenly over the day. 0 = no daily limit (up to 2 per run)."></div>
+          <div class="col-md-3"><label class="form-label small fw-semibold">Post from (hour)</label><input type="number" class="form-control" id="bot-from" value="8" min="0" max="23" title="Berlin time. No posts (and no AI requests) outside these hours."></div>
+          <div class="col-md-3"><label class="form-label small fw-semibold">Post until (hour)</label><input type="number" class="form-control" id="bot-until" value="20" min="1" max="24" title="Berlin time. 8 to 20 = posts between 08:00 and 20:00. Same value in both = any time."></div>
           <div class="col-md-3"><label class="form-label small fw-semibold">Run every (minutes)</label><input type="number" class="form-control" id="bot-every" value="60" min="5" max="1440" title="How often this bot checks the feeds. Posts per day still spaces the posts out."></div>
           <div class="col-md-3"><label class="form-label small fw-semibold">Mode</label>
             <select class="form-select" id="bot-mode" title="Learning: each post is a lesson (simple text, words, grammar, slow audio, quiz) in the source language, explained in the channel language">
@@ -570,6 +572,8 @@ function openBotModal(bot = null) {
   document.getElementById('bot-target-lang').value = bot?.target_language || 'fa';
   document.getElementById('bot-perday').value = bot ? bot.max_posts_per_day ?? 2 : 2;
   document.getElementById('bot-every').value = bot?.run_every_minutes || 60;
+  document.getElementById('bot-from').value = bot ? bot.post_from_hour ?? 8 : 8;
+  document.getElementById('bot-until').value = bot ? bot.post_until_hour ?? 20 : 20;
   document.getElementById('bot-mode').value = bot?.mode || 'news';
   document.getElementById('bot-level').value = bot?.level || 'B1';
   document.getElementById('bot-token').value = '';
@@ -594,6 +598,8 @@ async function saveBot() {
     target_language: document.getElementById('bot-target-lang').value,
     max_posts_per_day: parseInt(document.getElementById('bot-perday').value) || 0,
     run_every_minutes: parseInt(document.getElementById('bot-every').value) || 60,
+    post_from_hour: parseInt(document.getElementById('bot-from').value) || 0,
+    post_until_hour: parseInt(document.getElementById('bot-until').value) || 0,
     mode: document.getElementById('bot-mode').value,
     level: document.getElementById('bot-level').value,
     telegram_chat_id: document.getElementById('bot-chatid').value,

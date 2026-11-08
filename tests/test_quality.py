@@ -310,7 +310,8 @@ def test_new_bots_default_to_two_posts_per_day():
 
 def test_daily_budget_spreads_posts():
     bot_id = _bot(max_posts_per_day=2)
-    processor = NewsProcessor({"bot_id": bot_id, "max_posts_per_day": 2, "max_posts_per_run": 5})
+    processor = NewsProcessor({"bot_id": bot_id, "max_posts_per_day": 2, "max_posts_per_run": 5,
+                               "post_from_hour": 0, "post_until_hour": 0})   # any time of day
     assert processor._post_budget(bot_id) == 1          # nothing posted yet: one now
     _sent(bot_id, "a", hours_ago=3)
     assert processor._post_budget(bot_id) == 0          # 3h ago, need ~12h between posts
@@ -387,7 +388,8 @@ def test_run_every_is_set_per_bot():
 def test_bot_is_due_after_its_own_interval():
     from processor import is_due
 
-    fast, slow = _bot(run_every_minutes=30), _bot(run_every_minutes=240)
+    fast = _bot(run_every_minutes=30, post_from_hour=0, post_until_hour=0)
+    slow = _bot(run_every_minutes=240, post_from_hour=0, post_until_hour=0)
     assert is_due(db.get_bot(fast)) and is_due(db.get_bot(slow))   # never ran
     for bot_id in (fast, slow):
         db.log_activity("X", f"bot:{bot_id}", 0, 0, 0)
@@ -490,3 +492,37 @@ def test_provider_that_is_down_is_skipped_for_a_while(monkeypatch):
     with pytest.raises(LlmUnavailable, match="resting"):
         client.complete_json([{"role": "user", "content": "x"}])
     assert len(calls) == 1
+
+
+def test_posting_hours():
+    from processor import in_posting_window, is_due, window_hours
+
+    def at(hour, minute=0):   # a Berlin wall-clock time on a winter day (UTC+1)
+        return datetime(2026, 11, 8, hour, minute, tzinfo=timezone.utc) - timedelta(hours=1)
+
+    day = {"post_from_hour": 8, "post_until_hour": 20}
+    assert not in_posting_window(day, at(7, 59)) and in_posting_window(day, at(8))
+    assert in_posting_window(day, at(19, 59)) and not in_posting_window(day, at(20)) and not in_posting_window(day, at(2))
+    assert in_posting_window({}, at(12)) and not in_posting_window({}, at(23))           # default 8-20
+    night_shift = {"post_from_hour": 22, "post_until_hour": 6}
+    assert in_posting_window(night_shift, at(23)) and in_posting_window(night_shift, at(5)) and not in_posting_window(night_shift, at(12))
+    assert in_posting_window({"post_from_hour": 0, "post_until_hour": 0}, at(3))          # same hour: any time
+    assert window_hours(day) == 12 and window_hours(night_shift) == 8 and window_hours({"post_from_hour": 5, "post_until_hour": 5}) == 24
+
+    bot = db.get_bot(_bot(post_from_hour=8, post_until_hour=20))
+    assert (bot["post_from_hour"], bot["post_until_hour"]) == (8, 20)
+    assert is_due(bot, at(9)) and not is_due(bot, at(22))         # never ran, but the night is quiet
+    db.update_bot(bot["id"], {"post_from_hour": 30, "post_until_hour": "x"})
+    bot = db.get_bot(bot["id"])
+    assert (bot["post_from_hour"], bot["post_until_hour"]) == (24, 20)
+
+
+def test_posts_are_spread_over_the_posting_hours():
+    bot_id = _bot(max_posts_per_day=2)
+    processor = NewsProcessor({"bot_id": bot_id, "max_posts_per_day": 2, "post_from_hour": 8, "post_until_hour": 20})
+    _sent(bot_id, "morning", hours_ago=6)
+    assert processor._post_budget(bot_id) == 1          # 6h > 0.9 * 12h / 2: the second post fits before 20:00
+    with db._conn() as c:
+        c.execute("DELETE FROM posts")
+    _sent(bot_id, "morning", hours_ago=5)
+    assert processor._post_budget(bot_id) == 0

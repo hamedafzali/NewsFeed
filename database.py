@@ -33,6 +33,8 @@ def _migrate(c):
         "ALTER TABLE bots ADD COLUMN mode TEXT NOT NULL DEFAULT 'news'",
         "ALTER TABLE bots ADD COLUMN level TEXT NOT NULL DEFAULT 'B1'",
         "ALTER TABLE bots ADD COLUMN run_every_minutes INTEGER NOT NULL DEFAULT 60",
+        "ALTER TABLE bots ADD COLUMN post_from_hour INTEGER NOT NULL DEFAULT 8",
+        "ALTER TABLE bots ADD COLUMN post_until_hour INTEGER NOT NULL DEFAULT 20",
     ]
     for sql in migrations:
         try:
@@ -65,6 +67,8 @@ def init_db():
                 mode TEXT NOT NULL DEFAULT 'news',  -- news | learning
                 level TEXT NOT NULL DEFAULT 'B1',   -- CEFR level of learning lessons
                 run_every_minutes INTEGER NOT NULL DEFAULT 60,  -- scheduler runs this bot this often
+                post_from_hour INTEGER NOT NULL DEFAULT 8,      -- posts only from this hour (Berlin time) ...
+                post_until_hour INTEGER NOT NULL DEFAULT 20,    -- ... until this hour
                 custom_feeds TEXT,
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -126,8 +130,8 @@ def add_bot(config: Dict[str, Any]) -> int:
             """INSERT INTO bots
                (name, city_name, country_code, news_language, target_language, bot_token,
                 telegram_chat_id, max_posts_per_run, max_posts_per_day, custom_feeds, active, mode, level,
-                run_every_minutes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                run_every_minutes, post_from_hour, post_until_hour)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 config["name"], config["city_name"], config["country_code"],
                 config.get("news_language", "en"), config.get("target_language", "fa"),
@@ -135,9 +139,18 @@ def add_bot(config: Dict[str, Any]) -> int:
                 config.get("max_posts_per_day", 2), config.get("custom_feeds"), 1 if config.get("active", True) else 0,
                 config.get("mode") or "news", config.get("level") or "B1",
                 _run_every(config.get("run_every_minutes")),
+                _hour(config.get("post_from_hour"), 8), _hour(config.get("post_until_hour"), 20),
             ),
         )
         return cur.lastrowid
+
+
+def _hour(value, default: int) -> int:
+    """An hour of the day for the posting window, 0-24."""
+    try:
+        return min(24, max(0, int(value)))
+    except (TypeError, ValueError):
+        return default
 
 
 def _run_every(value) -> int:
@@ -183,10 +196,13 @@ def get_bot(bot_id: int) -> Optional[Dict]:
 def update_bot(bot_id: int, config: Dict[str, Any]):
     fields = ["name", "city_name", "country_code", "news_language", "target_language",
               "bot_token", "telegram_chat_id", "max_posts_per_run", "max_posts_per_day",
-              "custom_feeds", "active", "mode", "level", "run_every_minutes"]
+              "custom_feeds", "active", "mode", "level", "run_every_minutes", "post_from_hour", "post_until_hour"]
     updates = {k: config[k] for k in fields if k in config}
     if "run_every_minutes" in updates:
         updates["run_every_minutes"] = _run_every(updates["run_every_minutes"])
+    for key, default in (("post_from_hour", 8), ("post_until_hour", 20)):
+        if key in updates:
+            updates[key] = _hour(updates[key], default)
     if not updates:
         return
     set_clause = ", ".join(f"{k} = ?" for k in updates)

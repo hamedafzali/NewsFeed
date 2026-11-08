@@ -215,8 +215,9 @@ class NewsProcessor:
     def _post_budget(self, bot_id: Optional[int]) -> int:
         """How many posts this run may send.
 
-        With a daily limit, posts are spread out: at most one per run, and only once
-        ~24h/limit has passed since the last post (10% slack for the run interval).
+        With a daily limit, posts are spread out over the posting hours: at most one per
+        run, and only once ~(posting hours)/limit has passed since the last post (10% slack
+        for the run interval).
         """
         per_run = int(self.config.get("max_posts_per_run") or 2)
         per_day = int(self.config.get("max_posts_per_day") or 0)
@@ -229,7 +230,7 @@ class NewsProcessor:
             return 0
         if sent:
             last = datetime.strptime(sent[0]["posted_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            if now - last < timedelta(hours=24 / per_day * 0.9):
+            if now - last < timedelta(hours=window_hours(self.config) / per_day * 0.9):
                 return 0
         return 1
 
@@ -452,12 +453,36 @@ _run_locks: Dict[int, threading.Lock] = {}
 _run_locks_guard = threading.Lock()
 
 
+def posting_window(config: Dict[str, Any]):
+    """(from hour, until hour) in Berlin time; the bot posts only in between."""
+    def hour(key, default):
+        value = config.get(key)
+        return default if value is None or value == "" else min(24, max(0, int(value)))
+    return hour("post_from_hour", 8), hour("post_until_hour", 20)
+
+
+def window_hours(config: Dict[str, Any]) -> float:
+    start, end = posting_window(config)
+    return 24.0 if start == end else float((end - start) % 24 or 24)
+
+
+def in_posting_window(config: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    start, end = posting_window(config)
+    if start == end:
+        return True  # same hour twice: no quiet time
+    hour = (now or datetime.now(timezone.utc)).astimezone(speech._berlin()).hour
+    return start <= hour < end if start < end else (hour >= start or hour < end)
+
+
 def is_due(bot: Dict[str, Any], now: Optional[datetime] = None) -> bool:
-    """Whether the scheduler should run this bot now: its own "run every" minutes have passed."""
+    """Whether the scheduler should run this bot now: inside its posting hours, and its own
+    "run every" minutes have passed."""
+    now = now or datetime.now(timezone.utc)
+    if not in_posting_window(bot, now):
+        return False
     last = db.last_run_at(bot["id"])
     if not last:
         return True
-    now = now or datetime.now(timezone.utc)
     last_time = datetime.strptime(last, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     minutes = int(bot.get("run_every_minutes") or 60)
     return now - last_time >= timedelta(minutes=minutes) - timedelta(seconds=30)
@@ -499,6 +524,8 @@ def _run_bot(bot: Dict[str, Any]) -> NewsResult:
         "mode": bot.get("mode") or "news",
         "channel_name": bot.get("name") or "",
         "level": bot.get("level") or "B1",
+        "post_from_hour": bot.get("post_from_hour"),
+        "post_until_hour": bot.get("post_until_hour"),
         "sources": sources,
     }
     started = time.time()
