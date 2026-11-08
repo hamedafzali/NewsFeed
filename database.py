@@ -37,7 +37,6 @@ def _migrate(c):
         "ALTER TABLE bots ADD COLUMN post_until_hour INTEGER NOT NULL DEFAULT 20",
         "ALTER TABLE posts ADD COLUMN message_id INTEGER",
         "ALTER TABLE posts ADD COLUMN lesson_id INTEGER",
-        "ALTER TABLE quiz_polls ADD COLUMN batch TEXT",
     ]
     for sql in migrations:
         try:
@@ -170,48 +169,12 @@ def init_db():
                 PRIMARY KEY (bot_id, day)
             );
 
-            -- People who used a learning bot privately. Deleted with /loeschen.
-            CREATE TABLE IF NOT EXISTS learners (
-                bot_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                first_name TEXT,
-                language_code TEXT,
-                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (bot_id, user_id)
-            );
-
-            -- Üben taps (kind 'open') and similar learner actions.
-            CREATE TABLE IF NOT EXISTS practice_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            -- How often each lesson's Üben button was used. Only the count: nothing about
+            -- who used it is stored (no Telegram ids, names or answers).
+            CREATE TABLE IF NOT EXISTS lesson_opens (
+                lesson_id INTEGER PRIMARY KEY,
                 bot_id INTEGER,
-                lesson_id INTEGER,
-                user_id INTEGER NOT NULL,
-                kind TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_practice_user ON practice_events(user_id);
-
-            -- Each quiz sent privately, so its answer can be matched to lesson and word.
-            CREATE TABLE IF NOT EXISTS quiz_polls (
-                poll_id TEXT PRIMARY KEY,
-                bot_id INTEGER,
-                lesson_id INTEGER,
-                user_id INTEGER NOT NULL,
-                position INTEGER,
-                kind TEXT,
-                word TEXT,
-                correct_option INTEGER,
-                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS quiz_answers (
-                poll_id TEXT NOT NULL,
-                user_id INTEGER NOT NULL,
-                option INTEGER,
-                correct INTEGER,
-                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (poll_id, user_id)
+                opens INTEGER NOT NULL DEFAULT 0
             );
 
             -- Latest reaction counts of channel posts (Telegram sends totals, not who reacted).
@@ -225,6 +188,9 @@ def init_db():
             );
         """)
         _migrate(c)
+        # Per-person learner data was recorded briefly (2026-11-08); it is not kept.
+        for table in ("learners", "practice_events", "quiz_polls", "quiz_answers"):
+            c.execute(f"DROP TABLE IF EXISTS {table}")
 
 
 # --- Bots ---
@@ -589,83 +555,10 @@ def bot_id_for_token(token: str) -> Optional[int]:
         return row["id"] if row else None
 
 
-def touch_learner(bot_id: Optional[int], user: Dict[str, Any]) -> bool:
-    """Record a private user of a learning bot; True the first time we see them."""
-    if bot_id is None or not user.get("id"):
-        return False
+def count_open(bot_id: Optional[int], lesson_id: int) -> None:
     with _conn() as c:
-        known = c.execute("SELECT 1 FROM learners WHERE bot_id = ? AND user_id = ?",
-                          (bot_id, user["id"])).fetchone()
-        if known:
-            c.execute("""UPDATE learners SET first_name = ?, language_code = ?, last_seen = CURRENT_TIMESTAMP
-                         WHERE bot_id = ? AND user_id = ?""",
-                      (user.get("first_name"), user.get("language_code"), bot_id, user["id"]))
-            return False
-        c.execute("INSERT INTO learners (bot_id, user_id, first_name, language_code) VALUES (?,?,?,?)",
-                  (bot_id, user["id"], user.get("first_name"), user.get("language_code")))
-        return True
-
-
-def log_practice(bot_id: Optional[int], lesson_id: Optional[int], user_id: int, kind: str = "open") -> None:
-    with _conn() as c:
-        c.execute("INSERT INTO practice_events (bot_id, lesson_id, user_id, kind) VALUES (?,?,?,?)",
-                  (bot_id, lesson_id, user_id, kind))
-
-
-def save_quiz_poll(poll_id: str, bot_id: Optional[int], lesson_id: Optional[int], user_id: int, position: int,
-                   kind: Optional[str], word: Optional[str], correct_option: int, batch: Optional[str] = None) -> None:
-    with _conn() as c:
-        c.execute("""INSERT OR REPLACE INTO quiz_polls
-                     (poll_id, bot_id, lesson_id, user_id, position, kind, word, correct_option, batch)
-                     VALUES (?,?,?,?,?,?,?,?,?)""",
-                  (poll_id, bot_id, lesson_id, user_id, position, kind, word, correct_option, batch))
-
-
-def get_quiz_poll(poll_id: str) -> Optional[Dict[str, Any]]:
-    with _conn() as c:
-        row = c.execute("SELECT * FROM quiz_polls WHERE poll_id = ?", (poll_id,)).fetchone()
-        return dict(row) if row else None
-
-
-def batch_score(batch: str, user_id: int) -> Dict[str, int]:
-    """How many quizzes of one practice round were sent, answered, and answered right."""
-    with _conn() as c:
-        row = c.execute("""SELECT COUNT(*) AS sent, COUNT(a.poll_id) AS answered, COALESCE(SUM(a.correct), 0) AS correct
-                           FROM quiz_polls p LEFT JOIN quiz_answers a ON a.poll_id = p.poll_id AND a.user_id = p.user_id
-                           WHERE p.batch = ? AND p.user_id = ?""", (batch, user_id)).fetchone()
-        return dict(row)
-
-
-def learner_answers(bot_id: Optional[int], user_id: int) -> List[Dict[str, Any]]:
-    """A learner's quiz answers on one bot, oldest first."""
-    with _conn() as c:
-        rows = c.execute("""SELECT p.lesson_id, p.position, p.kind, p.word, a.correct, a.ts
-                            FROM quiz_answers a JOIN quiz_polls p ON p.poll_id = a.poll_id
-                            WHERE a.user_id = ? AND p.bot_id IS ? ORDER BY a.ts, a.rowid""",
-                         (user_id, bot_id)).fetchall()
-        return [dict(r) for r in rows]
-
-
-def learner_activity_times(bot_id: Optional[int], user_id: int) -> List[str]:
-    """UTC timestamps of a learner's Üben taps and answers (for the streak)."""
-    with _conn() as c:
-        rows = c.execute("""SELECT ts FROM practice_events WHERE user_id = ? AND bot_id IS ?
-                            UNION ALL
-                            SELECT a.ts FROM quiz_answers a JOIN quiz_polls p ON p.poll_id = a.poll_id
-                            WHERE a.user_id = ? AND p.bot_id IS ?""", (user_id, bot_id, user_id, bot_id)).fetchall()
-        return [r[0] for r in rows]
-
-
-def save_quiz_answer(poll_id: str, user_id: int, option: Optional[int]) -> Optional[bool]:
-    """Store an answer to one of our quizzes; returns whether it was right (None: unknown poll)."""
-    with _conn() as c:
-        poll = c.execute("SELECT correct_option FROM quiz_polls WHERE poll_id = ?", (poll_id,)).fetchone()
-        if not poll:
-            return None
-        correct = option is not None and option == poll["correct_option"]
-        c.execute("INSERT OR REPLACE INTO quiz_answers (poll_id, user_id, option, correct) VALUES (?,?,?,?)",
-                  (poll_id, user_id, option, 1 if correct else 0))
-        return correct
+        c.execute("""INSERT INTO lesson_opens (lesson_id, bot_id, opens) VALUES (?, ?, 1)
+                     ON CONFLICT(lesson_id) DO UPDATE SET opens = opens + 1""", (lesson_id, bot_id))
 
 
 def save_reactions(chat_id: str, message_id: int, reactions: Dict[str, int]) -> None:
@@ -673,12 +566,3 @@ def save_reactions(chat_id: str, message_id: int, reactions: Dict[str, int]) -> 
         c.execute("""INSERT OR REPLACE INTO post_reactions (chat_id, message_id, reactions, total, updated_at)
                      VALUES (?,?,?,?,CURRENT_TIMESTAMP)""",
                   (str(chat_id), message_id, json.dumps(reactions, ensure_ascii=False), sum(reactions.values())))
-
-
-def delete_learner(user_id: int) -> None:
-    """Remove everything stored about one person (all bots)."""
-    with _conn() as c:
-        c.execute("DELETE FROM quiz_answers WHERE user_id = ?", (user_id,))
-        c.execute("DELETE FROM quiz_polls WHERE user_id = ?", (user_id,))
-        c.execute("DELETE FROM practice_events WHERE user_id = ?", (user_id,))
-        c.execute("DELETE FROM learners WHERE user_id = ?", (user_id,))

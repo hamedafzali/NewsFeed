@@ -1,5 +1,5 @@
 """What the platform records for the reports: AI usage, run traces, post links,
-subscribers, learners, Üben taps, quiz answers and reactions."""
+subscribers, Üben taps (a count only) and reaction counts — nothing about learners."""
 import sqlite3
 import time
 
@@ -91,7 +91,7 @@ def test_subscribers_are_counted_once_a_day(monkeypatch):
     assert _rows("SELECT bot_id, members FROM channel_stats") == [{"bot_id": bot_id, "members": 12}]
 
 
-def test_practice_records_learner_taps_and_answers_and_can_forget_them(monkeypatch):
+def test_practice_counts_taps_but_stores_nothing_about_the_person(monkeypatch):
     bot_id = db.add_bot({"name": "x", "city_name": "x", "country_code": "DE", "bot_token": "1:a",
                          "telegram_chat_id": "-100", "mode": "learning"})
     record = lesson_to_record(_checked_lesson())
@@ -101,28 +101,17 @@ def test_practice_records_learner_taps_and_answers_and_can_forget_them(monkeypat
     monkeypatch.setattr("news_platform.learning.practice.TelegramPublisher",
                         lambda token, chat_id: sent.append(_FakePublisher(chat_id)) or sent[-1])
     bot = PracticeBot("1:a")
-    user = {"id": 42, "first_name": "Sara", "language_code": "fa"}
-    message = {"chat": {"id": 42, "type": "private"}, "from": user, "date": int(time.time()),
-               "text": f"/start l{lesson_id}"}
+    message = {"chat": {"id": 42, "type": "private"}, "from": {"id": 42, "first_name": "Sara"},
+               "date": int(time.time()), "text": f"/start l{lesson_id}"}
 
     bot.handle({"update_id": 1, "message": message})
-    first = sent[-1].sent
-    assert "/loeschen" in first[0][1]  # privacy note the first time only
-    quizzes = [extra for kind, _, extra in first if kind == "quiz"]
-    assert quizzes and all(q == {"anonymous": False} for q in quizzes)
-    assert _rows("SELECT bot_id, lesson_id, user_id, kind FROM practice_events") == [
-        {"bot_id": bot_id, "lesson_id": lesson_id, "user_id": 42, "kind": "open"}]
-    polls = _rows("SELECT * FROM quiz_polls ORDER BY position")
-    assert len(polls) == len(record["exercises"]) and polls[0]["word"] == record["exercises"][0]["word"]
-
-    right, wrong = polls[0], polls[1]
-    bot.handle({"update_id": 2, "poll_answer": {"poll_id": right["poll_id"], "user": user,
-                                                "option_ids": [right["correct_option"]]}})
-    bot.handle({"update_id": 3, "poll_answer": {"poll_id": wrong["poll_id"], "user": user,
-                                                "option_ids": [(wrong["correct_option"] + 1) % 3]}})
-    bot.handle({"update_id": 4, "poll_answer": {"poll_id": "someone-elses", "user": user, "option_ids": [0]}})
-    answers = {r["poll_id"]: r["correct"] for r in _rows("SELECT poll_id, correct FROM quiz_answers")}
-    assert answers == {right["poll_id"]: 1, wrong["poll_id"]: 0}
+    bot.handle({"update_id": 2, "message": message})  # double tap: not counted
+    bot.handle({"update_id": 3, "message": {**message, "chat": {"id": 43, "type": "private"}}})
+    assert _rows("SELECT lesson_id, bot_id, opens FROM lesson_opens") == [
+        {"lesson_id": lesson_id, "bot_id": bot_id, "opens": 2}]
+    quizzes = [extra for kind, _, extra in sent[0].sent if kind == "quiz"]
+    assert quizzes and all(q == {"anonymous": True} for q in quizzes)
+    bot.handle({"update_id": 4, "poll_answer": {"poll_id": "p", "user": {"id": 42}, "option_ids": [0]}})  # ignored
 
     bot.handle({"update_id": 5, "message_reaction_count": {
         "chat": {"id": -100}, "message_id": 77,
@@ -130,77 +119,17 @@ def test_practice_records_learner_taps_and_answers_and_can_forget_them(monkeypat
                       {"type": {"type": "emoji", "emoji": "❤"}, "total_count": 2}]}})
     assert _rows("SELECT message_id, total FROM post_reactions") == [{"message_id": 77, "total": 5}]
 
-    bot.handle({"update_id": 6, "message": {**message, "text": "/start"}})
-    assert all("/loeschen" not in text for _, text, _ in sent[-1].sent if isinstance(text, str))
-
-    bot.handle({"update_id": 7, "message": {**message, "text": "/loeschen"}})
-    for table in ("learners", "practice_events", "quiz_polls", "quiz_answers"):
-        assert _rows(f"SELECT * FROM {table}") == []
+    # No table holds a Telegram user id or name.
+    for table in [r["name"] for r in _rows("SELECT name FROM sqlite_master WHERE type = 'table'")]:
+        columns = {r["name"] for r in _rows(f"PRAGMA table_info({table})")}
+        assert not columns & {"user_id", "first_name", "username", "language_code"}, table
 
 
-def _practice_bot(monkeypatch):
-    bot_id = db.add_bot({"name": "x", "city_name": "x", "country_code": "DE", "bot_token": "1:a",
-                         "telegram_chat_id": "-100", "mode": "learning"})
-    record = lesson_to_record(_checked_lesson())
-    record.update(explain_language="fa", exercises=build_exercises(FDP_LESSON, "fa"))
-    lesson_id = db.save_lesson(bot_id, record)
-    sent = []
-    monkeypatch.setattr("news_platform.learning.practice.TelegramPublisher",
-                        lambda token, chat_id: sent.append(_FakePublisher(chat_id)) or sent[-1])
-    user = {"id": 42, "first_name": "Sara"}
-    message = {"chat": {"id": 42, "type": "private"}, "from": user, "date": int(time.time())}
-    return PracticeBot("1:a"), record, lesson_id, sent, user, message
-
-
-def _answer(bot, poll, user, right):
-    option = poll["correct_option"] if right else (poll["correct_option"] + 1) % 3
-    bot.handle({"update_id": 0, "poll_answer": {"poll_id": poll["poll_id"], "user": user, "option_ids": [option]}})
-
-
-def _texts(sent):
-    return [text for publisher in sent for kind, text, _ in publisher.sent if kind == "message"]
-
-
-def test_score_after_the_round_progress_and_review(monkeypatch):
-    bot, record, lesson_id, sent, user, message = _practice_bot(monkeypatch)
-    bot.handle({"update_id": 1, "message": {**message, "text": f"/start l{lesson_id}"}})
-    polls = _rows("SELECT * FROM quiz_polls ORDER BY position")
-    n = len(polls)
-    wrong = polls[0]
-    _answer(bot, wrong, user, right=False)
-    for poll in polls[1:-1]:
-        _answer(bot, poll, user, right=True)
-    assert not any("🎯" in t for t in _texts(sent))  # not before the round is complete
-    _answer(bot, polls[-1], user, right=True)
-    assert f"🎯 نتیجه: {n - 1} از {n} درست" in _texts(sent)[-1]
-
-    bot.handle({"update_id": 2, "message": {**message, "text": "/fortschritt"}})
-    report = _texts(sent)[-1]
-    assert f"جواب‌ها: {n} — درست: {n - 1}" in report and "روزهای پشت‌سرهم: 1" in report
-    assert wrong["word"] in report and "/wiederholen" in report
-
-    bot.handle({"update_id": 3, "message": {**message, "text": "/wiederholen"}})
-    review = sent[-1].sent
-    assert review[0][0] == "message" and [k for k, _, _ in review[1:]] == ["quiz"]
-    again = _rows("SELECT * FROM quiz_polls WHERE batch LIKE 'r:%'")[0]
-    assert (again["lesson_id"], again["position"], again["word"]) == (lesson_id, 0, wrong["word"])
-    _answer(bot, again, user, right=True)
-    assert "🎯 نتیجه: 1 از 1 درست — عالی!" in _texts(sent)[-1]
-
-    bot.handle({"update_id": 4, "message": {**message, "text": "/wiederholen"}})
-    assert "🎉" in _texts(sent)[-1]  # nothing left to review
-
-
-def test_progress_before_any_practice(monkeypatch):
-    bot, _, _, sent, _, message = _practice_bot(monkeypatch)
-    bot.handle({"update_id": 1, "message": {**message, "text": "/fortschritt"}})
-    assert "هنوز تمرینی" in _texts(sent)[-1]
-
-
-def test_streak_counts_days_in_a_row_until_today_or_yesterday():
-    from datetime import date
-    from news_platform.learning.progress import streak
-    today = date(2026, 11, 8)
-    assert streak([date(2026, 11, 6), date(2026, 11, 7), date(2026, 11, 8)], today) == 3
-    assert streak([date(2026, 11, 6), date(2026, 11, 7)], today) == 2  # today not practised yet
-    assert streak([date(2026, 11, 5)], today) == 0
+def test_learner_tables_from_before_are_dropped():
+    c = sqlite3.connect(db._db_path())
+    c.execute("CREATE TABLE learners (bot_id INTEGER, user_id INTEGER, first_name TEXT)")
+    c.execute("INSERT INTO learners VALUES (1, 42, 'Sara')")
+    c.commit()
+    c.close()
+    db.init_db()
+    assert not _rows("SELECT name FROM sqlite_master WHERE name = 'learners'")

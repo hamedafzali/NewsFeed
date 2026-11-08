@@ -99,12 +99,9 @@ Indexes cover source/date, topic/date, language, quality, and content hash.
   Run steps and AI answers are pruned after 30 days; the counts stay.
 - `posts.message_id` / `posts.lesson_id`: the link to each channel post.
 - `channel_stats`: the channel's subscriber count, once a day.
-- `learners`, `practice_events`, `quiz_polls`, `quiz_answers`: who used a learning bot, Üben taps and quiz
-  answers (private quizzes are non-anonymous so the bot gets the answer). New users get a privacy note;
-  `/loeschen` deletes everything stored about them.
-- Learners see their own progress in the bot: a score line after each practice round, `/fortschritt`
-  (answers, % right, lessons, last 7 days, days in a row, words to review) and `/wiederholen` (asks again
-  the questions whose latest answer was wrong, options reshuffled).
+- `lesson_opens`: how often each lesson's Üben button was used — a count only.
+- Nothing about the people who use the bots is stored: no Telegram ids, names or answers (quizzes are
+  anonymous).
 - `post_reactions`: latest reaction counts of channel posts (learning bots, which poll their updates).
 
 ## Development

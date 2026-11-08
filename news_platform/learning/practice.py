@@ -5,7 +5,12 @@ then sends that person, privately, the lesson's words and grammar note and the
 practice questions. Updates come in by long polling (getUpdates), one thread per
 learning-bot token, so the server needs no public URL. Only one process may poll a
 token: run gunicorn with a single worker.
+
+Privacy: nothing about the people who use the bot is stored — no Telegram ids, names
+or answers. The quizzes are anonymous; only how often a lesson's button was used is
+counted.
 """
+import json
 import logging
 import re
 import threading
@@ -15,41 +20,27 @@ from typing import Any, Dict, Optional
 import requests
 
 import database as db
-from news_platform.learning import progress
 from news_platform.learning.lesson import format_practice, lesson_from_record
 from news_platform.publishing.telegram import API_BASE, TelegramPublisher
 
 DEEP_LINK = re.compile(r"^/start\s+l(\d+)\s*$")
-DELETE = re.compile(r"^/(loeschen|delete)(@\w+)?\s*$", re.IGNORECASE)
-PROGRESS = re.compile(r"^/(fortschritt|progress)(@\w+)?\s*$", re.IGNORECASE)
-REVIEW = re.compile(r"^/(wiederholen|review)(@\w+)?\s*$", re.IGNORECASE)
-COMMANDS = [  # the bot's command menu (Telegram commands can't have umlauts)
-    {"command": "fortschritt", "description": "پیشرفت شما · Fortschritt"},
-    {"command": "wiederholen", "description": "مرور اشتباه‌ها · Fehler wiederholen"},
-    {"command": "loeschen", "description": "پاک کردن اطلاعات شما · Daten löschen"},
-]
-UPDATES = '["message","poll_answer","message_reaction_count"]'
+# Reaction counts of the channel's posts (totals only; Telegram doesn't say who reacted).
+UPDATES = json.dumps(["message", "message_reaction_count"])
 STALE_SECONDS = 600  # don't answer messages older than this (e.g. queued while the server was down)
 REPEAT_SECONDS = 120  # tapping the same button again within this time sends nothing new
 
 MESSAGES = {
     "fa": {
         "welcome": "سلام! 👋\nزیر هر خبر در کانال روی دکمه‌ی «✏️ Üben · تمرین» بزنید تا لغات، گرامر و تمرین‌های "
-                   "همان خبر اینجا برایتان بیاید.\n\n/fortschritt پیشرفت شما · /wiederholen مرور اشتباه‌ها",
+                   "همان خبر اینجا برایتان بیاید.",
         "missing": "این درس پیدا نشد. لطفاً دوباره از دکمه‌ی زیر خبر در کانال استفاده کنید.",
         "start": "🧩 {n} تمرین برای این خبر — جواب درست را انتخاب کنید:",
-        "privacy": "ℹ️ برای نمایش پیشرفت شما، شناسه‌ی تلگرام، نام کوچک و جواب‌های تمرین‌ها ذخیره می‌شود. "
-                   "برای پاک کردن همه‌ی آن‌ها /loeschen را بفرستید.",
-        "deleted": "✅ همه‌ی اطلاعات شما پاک شد. اگر دوباره تمرین کنید، از نو ذخیره می‌شود.",
     },
     "en": {
         "welcome": "Hi! 👋\nTap \"✏️ Practice\" under a news post in the channel to get its words, grammar and "
-                   "exercises here.\n\n/fortschritt your progress · /wiederholen review mistakes",
+                   "exercises here.",
         "missing": "This lesson wasn't found. Please use the button under the post in the channel again.",
         "start": "🧩 {n} exercises for this story — pick the right answer:",
-        "privacy": "ℹ️ To show your progress, your Telegram id, first name and exercise answers are stored. "
-                   "Send /loeschen to delete them.",
-        "deleted": "✅ All your data was deleted. If you practise again, it is stored anew.",
     },
 }
 
@@ -62,19 +53,9 @@ class PracticeBot:
     def __init__(self, token: str):
         self.token = token
         self.logger = logging.getLogger(__name__)
-        self._recent: Dict[tuple, float] = {}
-        self._bot_id: Optional[int] = None
-
-    @property
-    def bot_id(self) -> Optional[int]:
-        if self._bot_id is None:
-            self._bot_id = db.bot_id_for_token(self.token)
-        return self._bot_id
+        self._recent: Dict[tuple, float] = {}  # in memory only, to ignore double taps
 
     def handle(self, update: Dict[str, Any]) -> None:
-        if "poll_answer" in update:
-            self._answer(update["poll_answer"])
-            return
         if "message_reaction_count" in update:
             self._reactions(update["message_reaction_count"])
             return
@@ -83,45 +64,26 @@ class PracticeBot:
         if chat.get("type") != "private" or time.time() - message.get("date", 0) > STALE_SECONDS:
             return
         publisher = TelegramPublisher(self.token, str(chat["id"]))
-        user = message.get("from") or {"id": chat["id"], "first_name": chat.get("first_name")}
-        text = (message.get("text") or "").strip()
-        if DELETE.match(text):
-            db.delete_learner(user["id"])
-            publisher.send_message(MESSAGES["fa"]["deleted"], link_preview=False)
-            return
-        if (PROGRESS.match(text) or REVIEW.match(text)) and db.touch_learner(self.bot_id, user):
-            publisher.send_message(MESSAGES["fa"]["privacy"], link_preview=False)
-        if PROGRESS.match(text):
-            publisher.send_message(progress.format_summary(progress.summary(self.bot_id, user["id"]), "fa"),
-                                   link_preview=False)
-            return
-        if REVIEW.match(text):
-            self.send_review(publisher, user["id"])
-            return
-        match = DEEP_LINK.match(text)
-        lesson_id = int(match.group(1)) if match else None
-        record = db.get_lesson(lesson_id) if lesson_id else None
-        explain = (record or {}).get("explain_language", "fa")
-        texts = MESSAGES.get(explain, MESSAGES["en"])
-        if db.touch_learner(self.bot_id, user):
-            publisher.send_message(texts["privacy"], link_preview=False)
+        match = DEEP_LINK.match((message.get("text") or "").strip())
         if not match:
             publisher.send_message(MESSAGES["fa"]["welcome"], link_preview=False)
             return
+        lesson_id = int(match.group(1))
+        record = db.get_lesson(lesson_id)
         if not record:
             publisher.send_message(MESSAGES["fa"]["missing"], link_preview=False)
             return
+        now = time.time()
+        self._recent = {k: t for k, t in self._recent.items() if now - t < REPEAT_SECONDS}
         key = (chat["id"], lesson_id)
-        if time.time() - self._recent.get(key, 0) < REPEAT_SECONDS:
+        if key in self._recent:
             return
-        self._recent[key] = time.time()
-        bot_id = db.lesson_bot_id(lesson_id) or self.bot_id
-        db.log_practice(bot_id, lesson_id, user["id"], "open")
-        self.send_practice(publisher, record, lesson_id=lesson_id, user_id=user["id"], bot_id=bot_id)
+        self._recent[key] = now
+        db.count_open(db.lesson_bot_id(lesson_id), lesson_id)
+        self.send_practice(publisher, record)
 
     @staticmethod
-    def send_practice(publisher: TelegramPublisher, record: Dict[str, Any], lesson_id: Optional[int] = None,
-                      user_id: Optional[int] = None, bot_id: Optional[int] = None) -> None:
+    def send_practice(publisher: TelegramPublisher, record: Dict[str, Any]) -> None:
         explain = record.get("explain_language", "fa")
         texts = MESSAGES.get(explain, MESSAGES["en"])
         lesson = lesson_from_record(record)
@@ -129,47 +91,9 @@ class PracticeBot:
         exercises = record.get("exercises") or []
         if exercises:
             publisher.send_message(texts["start"].format(n=len(exercises)), link_preview=False)
-        batch = f"l{lesson_id}:{time.time():.3f}"
-        for position, exercise in enumerate(exercises):
-            PracticeBot._send_quiz(publisher, exercise, bot_id, lesson_id, user_id, position, batch)
-
-    def send_review(self, publisher: TelegramPublisher, user_id: int) -> None:
-        texts = progress.texts("fa")
-        questions = progress.review_questions(self.bot_id, user_id)
-        if not questions:
-            publisher.send_message(texts["nothing_to_review"], link_preview=False)
-            return
-        publisher.send_message(texts["review_start"].format(n=len(questions)), link_preview=False)
-        db.log_practice(self.bot_id, None, user_id, "review")
-        batch = f"r:{time.time():.3f}"
-        for question in questions:
-            self._send_quiz(publisher, question, self.bot_id, question["lesson_id"], user_id,
-                            question["position"], batch)
-
-    @staticmethod
-    def _send_quiz(publisher: TelegramPublisher, exercise: Dict[str, Any], bot_id: Optional[int],
-                   lesson_id: Optional[int], user_id: Optional[int], position: int, batch: str) -> None:
-        sent = publisher.send_quiz(exercise["q"], exercise["options"], exercise["answer"],
-                                   explanation=exercise.get("explanation", ""), anonymous=user_id is None)
-        if user_id is not None and sent.ok and sent.poll_id:
-            db.save_quiz_poll(sent.poll_id, bot_id, lesson_id, user_id, position, exercise.get("kind"),
-                              exercise.get("word"), exercise["answer"], batch)
-
-    def _answer(self, answer: Dict[str, Any]) -> None:
-        user = answer.get("user") or {}
-        options = answer.get("option_ids") or []
-        if not (user.get("id") and answer.get("poll_id") and options):
-            return
-        if db.save_quiz_answer(answer["poll_id"], user["id"], options[0]) is None:
-            return  # not one of ours
-        poll = db.get_quiz_poll(answer["poll_id"])
-        if not poll or not poll.get("batch"):
-            return
-        score = db.batch_score(poll["batch"], user["id"])
-        if score["sent"] and score["answered"] == score["sent"]:  # the round is complete: show the score
-            # In a private chat the chat id is the user's id.
-            TelegramPublisher(self.token, str(user["id"])).send_message(progress.format_score(score, "fa"),
-                                                                         link_preview=False)
+        for exercise in exercises:
+            publisher.send_quiz(exercise["q"], exercise["options"], exercise["answer"],
+                                explanation=exercise.get("explanation", ""))
 
     @staticmethod
     def _reactions(update: Dict[str, Any]) -> None:
@@ -183,14 +107,15 @@ class PracticeBot:
             counts[label] = counts.get(label, 0) + int(item.get("total_count") or 0)
         db.save_reactions(str(chat), message_id, counts)
 
-    def set_commands(self) -> None:
+    def clear_commands(self) -> None:
+        """Remove the command menu an earlier version set (/fortschritt, /wiederholen, /loeschen)."""
         try:
-            requests.post(f"{API_BASE}/bot{self.token}/setMyCommands", json={"commands": COMMANDS}, timeout=15)
+            requests.post(f"{API_BASE}/bot{self.token}/deleteMyCommands", json={}, timeout=15)
         except Exception as exc:
-            self.logger.warning("practice bot: setMyCommands failed: %s", exc)
+            self.logger.warning("practice bot: deleteMyCommands failed: %s", exc)
 
     def run(self, stop: threading.Event) -> None:
-        self.set_commands()
+        self.clear_commands()
         offset: Optional[int] = None
         while not stop.is_set():
             try:

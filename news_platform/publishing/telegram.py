@@ -154,17 +154,15 @@ class TelegramPublisher:
             payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
         return self._call("sendVideo", payload, files={"video": (filename, data, "video/mp4")})
 
-    def send_quiz(self, question: str, options: list, correct: int, explanation: str = "",
-                  anonymous: bool = True) -> SendResult:
+    def send_quiz(self, question: str, options: list, correct: int, explanation: str = "") -> SendResult:
         payload = {
             "chat_id": self.chat_id,
             "question": question,
             "options": [{"text": o} for o in options],
             "type": "quiz",
             "correct_option_id": correct,
-            # Channels need anonymous polls. In a private chat a non-anonymous one lets the bot
-            # receive the answer (poll_answer), for the learner's progress; nobody else sees it.
-            "is_anonymous": anonymous,
+            # Anonymous: the bot never learns who answered what (nothing about users is stored).
+            "is_anonymous": True,
         }
         if explanation:  # shown after answering
             payload["explanation"] = explanation[:200]
