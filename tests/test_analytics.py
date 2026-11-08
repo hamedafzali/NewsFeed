@@ -136,3 +136,71 @@ def test_practice_records_learner_taps_and_answers_and_can_forget_them(monkeypat
     bot.handle({"update_id": 7, "message": {**message, "text": "/loeschen"}})
     for table in ("learners", "practice_events", "quiz_polls", "quiz_answers"):
         assert _rows(f"SELECT * FROM {table}") == []
+
+
+def _practice_bot(monkeypatch):
+    bot_id = db.add_bot({"name": "x", "city_name": "x", "country_code": "DE", "bot_token": "1:a",
+                         "telegram_chat_id": "-100", "mode": "learning"})
+    record = lesson_to_record(_checked_lesson())
+    record.update(explain_language="fa", exercises=build_exercises(FDP_LESSON, "fa"))
+    lesson_id = db.save_lesson(bot_id, record)
+    sent = []
+    monkeypatch.setattr("news_platform.learning.practice.TelegramPublisher",
+                        lambda token, chat_id: sent.append(_FakePublisher(chat_id)) or sent[-1])
+    user = {"id": 42, "first_name": "Sara"}
+    message = {"chat": {"id": 42, "type": "private"}, "from": user, "date": int(time.time())}
+    return PracticeBot("1:a"), record, lesson_id, sent, user, message
+
+
+def _answer(bot, poll, user, right):
+    option = poll["correct_option"] if right else (poll["correct_option"] + 1) % 3
+    bot.handle({"update_id": 0, "poll_answer": {"poll_id": poll["poll_id"], "user": user, "option_ids": [option]}})
+
+
+def _texts(sent):
+    return [text for publisher in sent for kind, text, _ in publisher.sent if kind == "message"]
+
+
+def test_score_after_the_round_progress_and_review(monkeypatch):
+    bot, record, lesson_id, sent, user, message = _practice_bot(monkeypatch)
+    bot.handle({"update_id": 1, "message": {**message, "text": f"/start l{lesson_id}"}})
+    polls = _rows("SELECT * FROM quiz_polls ORDER BY position")
+    n = len(polls)
+    wrong = polls[0]
+    _answer(bot, wrong, user, right=False)
+    for poll in polls[1:-1]:
+        _answer(bot, poll, user, right=True)
+    assert not any("🎯" in t for t in _texts(sent))  # not before the round is complete
+    _answer(bot, polls[-1], user, right=True)
+    assert f"🎯 نتیجه: {n - 1} از {n} درست" in _texts(sent)[-1]
+
+    bot.handle({"update_id": 2, "message": {**message, "text": "/fortschritt"}})
+    report = _texts(sent)[-1]
+    assert f"جواب‌ها: {n} — درست: {n - 1}" in report and "روزهای پشت‌سرهم: 1" in report
+    assert wrong["word"] in report and "/wiederholen" in report
+
+    bot.handle({"update_id": 3, "message": {**message, "text": "/wiederholen"}})
+    review = sent[-1].sent
+    assert review[0][0] == "message" and [k for k, _, _ in review[1:]] == ["quiz"]
+    again = _rows("SELECT * FROM quiz_polls WHERE batch LIKE 'r:%'")[0]
+    assert (again["lesson_id"], again["position"], again["word"]) == (lesson_id, 0, wrong["word"])
+    _answer(bot, again, user, right=True)
+    assert "🎯 نتیجه: 1 از 1 درست — عالی!" in _texts(sent)[-1]
+
+    bot.handle({"update_id": 4, "message": {**message, "text": "/wiederholen"}})
+    assert "🎉" in _texts(sent)[-1]  # nothing left to review
+
+
+def test_progress_before_any_practice(monkeypatch):
+    bot, _, _, sent, _, message = _practice_bot(monkeypatch)
+    bot.handle({"update_id": 1, "message": {**message, "text": "/fortschritt"}})
+    assert "هنوز تمرینی" in _texts(sent)[-1]
+
+
+def test_streak_counts_days_in_a_row_until_today_or_yesterday():
+    from datetime import date
+    from news_platform.learning.progress import streak
+    today = date(2026, 11, 8)
+    assert streak([date(2026, 11, 6), date(2026, 11, 7), date(2026, 11, 8)], today) == 3
+    assert streak([date(2026, 11, 6), date(2026, 11, 7)], today) == 2  # today not practised yet
+    assert streak([date(2026, 11, 5)], today) == 0

@@ -37,6 +37,7 @@ def _migrate(c):
         "ALTER TABLE bots ADD COLUMN post_until_hour INTEGER NOT NULL DEFAULT 20",
         "ALTER TABLE posts ADD COLUMN message_id INTEGER",
         "ALTER TABLE posts ADD COLUMN lesson_id INTEGER",
+        "ALTER TABLE quiz_polls ADD COLUMN batch TEXT",
     ]
     for sql in migrations:
         try:
@@ -612,12 +613,47 @@ def log_practice(bot_id: Optional[int], lesson_id: Optional[int], user_id: int, 
 
 
 def save_quiz_poll(poll_id: str, bot_id: Optional[int], lesson_id: Optional[int], user_id: int, position: int,
-                   kind: Optional[str], word: Optional[str], correct_option: int) -> None:
+                   kind: Optional[str], word: Optional[str], correct_option: int, batch: Optional[str] = None) -> None:
     with _conn() as c:
         c.execute("""INSERT OR REPLACE INTO quiz_polls
-                     (poll_id, bot_id, lesson_id, user_id, position, kind, word, correct_option)
-                     VALUES (?,?,?,?,?,?,?,?)""",
-                  (poll_id, bot_id, lesson_id, user_id, position, kind, word, correct_option))
+                     (poll_id, bot_id, lesson_id, user_id, position, kind, word, correct_option, batch)
+                     VALUES (?,?,?,?,?,?,?,?,?)""",
+                  (poll_id, bot_id, lesson_id, user_id, position, kind, word, correct_option, batch))
+
+
+def get_quiz_poll(poll_id: str) -> Optional[Dict[str, Any]]:
+    with _conn() as c:
+        row = c.execute("SELECT * FROM quiz_polls WHERE poll_id = ?", (poll_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def batch_score(batch: str, user_id: int) -> Dict[str, int]:
+    """How many quizzes of one practice round were sent, answered, and answered right."""
+    with _conn() as c:
+        row = c.execute("""SELECT COUNT(*) AS sent, COUNT(a.poll_id) AS answered, COALESCE(SUM(a.correct), 0) AS correct
+                           FROM quiz_polls p LEFT JOIN quiz_answers a ON a.poll_id = p.poll_id AND a.user_id = p.user_id
+                           WHERE p.batch = ? AND p.user_id = ?""", (batch, user_id)).fetchone()
+        return dict(row)
+
+
+def learner_answers(bot_id: Optional[int], user_id: int) -> List[Dict[str, Any]]:
+    """A learner's quiz answers on one bot, oldest first."""
+    with _conn() as c:
+        rows = c.execute("""SELECT p.lesson_id, p.position, p.kind, p.word, a.correct, a.ts
+                            FROM quiz_answers a JOIN quiz_polls p ON p.poll_id = a.poll_id
+                            WHERE a.user_id = ? AND p.bot_id IS ? ORDER BY a.ts, a.rowid""",
+                         (user_id, bot_id)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def learner_activity_times(bot_id: Optional[int], user_id: int) -> List[str]:
+    """UTC timestamps of a learner's Üben taps and answers (for the streak)."""
+    with _conn() as c:
+        rows = c.execute("""SELECT ts FROM practice_events WHERE user_id = ? AND bot_id IS ?
+                            UNION ALL
+                            SELECT a.ts FROM quiz_answers a JOIN quiz_polls p ON p.poll_id = a.poll_id
+                            WHERE a.user_id = ? AND p.bot_id IS ?""", (user_id, bot_id, user_id, bot_id)).fetchall()
+        return [r[0] for r in rows]
 
 
 def save_quiz_answer(poll_id: str, user_id: int, option: Optional[int]) -> Optional[bool]:

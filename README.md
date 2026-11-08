@@ -102,6 +102,9 @@ Indexes cover source/date, topic/date, language, quality, and content hash.
 - `learners`, `practice_events`, `quiz_polls`, `quiz_answers`: who used a learning bot, Üben taps and quiz
   answers (private quizzes are non-anonymous so the bot gets the answer). New users get a privacy note;
   `/loeschen` deletes everything stored about them.
+- Learners see their own progress in the bot: a score line after each practice round, `/fortschritt`
+  (answers, % right, lessons, last 7 days, days in a row, words to review) and `/wiederholen` (asks again
+  the questions whose latest answer was wrong, options reshuffled).
 - `post_reactions`: latest reaction counts of channel posts (learning bots, which poll their updates).
 
 ## Development
