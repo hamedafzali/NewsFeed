@@ -171,7 +171,7 @@ def parse_json_object(text: str) -> Optional[Dict[str, Any]]:
 PROVIDERS = {
     # name: (endpoint, key variable, model variable, default model, extra request fields)
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-               "GEMINI_API_KEY", "GEMINI_MODEL", "gemini-3.8-flash", {"reasoning_effort": "low"}),
+               "GEMINI_API_KEY", "GEMINI_MODEL", "gemini-3.5-flash", {"reasoning_effort": "low"}),
     "groq": ("https://api.groq.com/openai/v1/chat/completions",
              "GROQ_API_KEY", "GROQ_MODEL", "openai/gpt-oss-120b", {"reasoning_effort": "low"}),
 }
