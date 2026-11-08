@@ -32,6 +32,7 @@ def _migrate(c):
         "ALTER TABLE bots ADD COLUMN max_posts_per_day INTEGER NOT NULL DEFAULT 2",
         "ALTER TABLE bots ADD COLUMN mode TEXT NOT NULL DEFAULT 'news'",
         "ALTER TABLE bots ADD COLUMN level TEXT NOT NULL DEFAULT 'B1'",
+        "ALTER TABLE bots ADD COLUMN run_every_minutes INTEGER NOT NULL DEFAULT 60",
     ]
     for sql in migrations:
         try:
@@ -63,6 +64,7 @@ def init_db():
                 max_posts_per_day INTEGER NOT NULL DEFAULT 2,  -- 0 = no daily limit
                 mode TEXT NOT NULL DEFAULT 'news',  -- news | learning
                 level TEXT NOT NULL DEFAULT 'B1',   -- CEFR level of learning lessons
+                run_every_minutes INTEGER NOT NULL DEFAULT 60,  -- scheduler runs this bot this often
                 custom_feeds TEXT,
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -123,17 +125,34 @@ def add_bot(config: Dict[str, Any]) -> int:
         cur = c.execute(
             """INSERT INTO bots
                (name, city_name, country_code, news_language, target_language, bot_token,
-                telegram_chat_id, max_posts_per_run, max_posts_per_day, custom_feeds, active, mode, level)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                telegram_chat_id, max_posts_per_run, max_posts_per_day, custom_feeds, active, mode, level,
+                run_every_minutes)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 config["name"], config["city_name"], config["country_code"],
                 config.get("news_language", "en"), config.get("target_language", "fa"),
                 config["bot_token"], config["telegram_chat_id"], config.get("max_posts_per_run", 2),
                 config.get("max_posts_per_day", 2), config.get("custom_feeds"), 1 if config.get("active", True) else 0,
                 config.get("mode") or "news", config.get("level") or "B1",
+                _run_every(config.get("run_every_minutes")),
             ),
         )
         return cur.lastrowid
+
+
+def _run_every(value) -> int:
+    """Minutes between scheduled runs of a bot: 60 by default, at least 5."""
+    try:
+        return max(5, int(value))
+    except (TypeError, ValueError):
+        return 60
+
+
+def last_run_at(bot_id: int) -> Optional[str]:
+    """UTC time ("YYYY-MM-DD HH:MM:SS") the bot last finished a run, manual or scheduled."""
+    with _conn() as c:
+        row = c.execute("SELECT MAX(created_at) FROM activity WHERE source = ?", (f"bot:{bot_id}",)).fetchone()
+        return row[0] if row else None
 
 
 def get_bots(active_only: bool = False, include_secrets: bool = False) -> List[Dict]:
@@ -164,8 +183,10 @@ def get_bot(bot_id: int) -> Optional[Dict]:
 def update_bot(bot_id: int, config: Dict[str, Any]):
     fields = ["name", "city_name", "country_code", "news_language", "target_language",
               "bot_token", "telegram_chat_id", "max_posts_per_run", "max_posts_per_day",
-              "custom_feeds", "active", "mode", "level"]
+              "custom_feeds", "active", "mode", "level", "run_every_minutes"]
     updates = {k: config[k] for k in fields if k in config}
+    if "run_every_minutes" in updates:
+        updates["run_every_minutes"] = _run_every(updates["run_every_minutes"])
     if not updates:
         return
     set_clause = ", ".join(f"{k} = ?" for k in updates)

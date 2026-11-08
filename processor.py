@@ -417,6 +417,17 @@ _run_locks: Dict[int, threading.Lock] = {}
 _run_locks_guard = threading.Lock()
 
 
+def is_due(bot: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """Whether the scheduler should run this bot now: its own "run every" minutes have passed."""
+    last = db.last_run_at(bot["id"])
+    if not last:
+        return True
+    now = now or datetime.now(timezone.utc)
+    last_time = datetime.strptime(last, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    minutes = int(bot.get("run_every_minutes") or 60)
+    return now - last_time >= timedelta(minutes=minutes) - timedelta(seconds=30)
+
+
 def run_bot(bot: Dict[str, Any]) -> NewsResult:
     """Run the full pipeline for a bot row from the panel database.
 

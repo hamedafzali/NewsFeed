@@ -24,7 +24,7 @@ If `API_KEY` is set, all `/api/v1/*` endpoints require `X-API-Key`. (`API_KEY` i
 2. Add the bot as **administrator** to your channel (with "Post messages" permission).
 3. Open the panel → Add Bot: set city/country, source language (feeds), channel language (fa/en/de), token, and the channel `@username` or `-100…` chat id.
 4. Click **Test** (verifies token *and* channel access), then **Run**.
-5. Set `SCHEDULE_INTERVAL_MINUTES` (default 30) to post automatically; already-posted articles are never re-sent per channel.
+5. Set `SCHEDULE_INTERVAL_MINUTES` to anything above 0 to post automatically; each bot then runs every **Run every** minutes set on it in the panel (default 60), and **Posts per day** spaces its posts out. Already-posted articles are never re-sent per channel.
 
 Each run takes items from every active feed in turn, keeps only articles published within `MAX_ARTICLE_AGE_HOURS` (default 36), drops Google News redirects, videos and live tickers, ranks newest-first, and posts one article per story (titles overlapping an earlier pick or a recent post are skipped).
 

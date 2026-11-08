@@ -10,6 +10,8 @@ from news_platform.storage import SQLiteStore
 from news_platform.utils.logging import configure_logging
 
 
+CHECK_EVERY_MINUTES = 5  # how often the scheduler looks for bots that are due
+
 def create_app() -> Flask:
     configure_logging()
     settings = get_settings()
@@ -104,9 +106,12 @@ def create_app() -> Flask:
 
 
 def _start_scheduler(app: Flask) -> None:
-    """Run all active bots every SCHEDULE_INTERVAL_MINUTES (0 disables)."""
-    interval = int(os.getenv("SCHEDULE_INTERVAL_MINUTES", "0"))
-    if interval <= 0:
+    """Run each active bot every "run every" minutes set on the bot in the panel.
+
+    SCHEDULE_INTERVAL_MINUTES only switches automatic runs on (> 0) or off (0); the
+    scheduler checks every few minutes which bots are due.
+    """
+    if int(os.getenv("SCHEDULE_INTERVAL_MINUTES", "0")) <= 0:
         return
 
     import logging
@@ -117,10 +122,12 @@ def _start_scheduler(app: Flask) -> None:
 
     def _run_all_bots():
         import database as paneldb
-        from processor import run_bot
+        from processor import is_due, run_bot
 
         for bot in paneldb.get_bots(active_only=True, include_secrets=True):
             try:
+                if not is_due(bot):
+                    continue
                 result = run_bot(bot)
                 logger.info("scheduled run bot=%s posted=%s processed=%s status=%s",
                             bot["id"], result.posted, result.processed, result.status)
@@ -128,7 +135,7 @@ def _start_scheduler(app: Flask) -> None:
                 logger.exception("scheduled run failed for bot=%s", bot.get("id"))
 
     scheduler = BackgroundScheduler(daemon=True)
-    scheduler.add_job(_run_all_bots, "interval", minutes=interval,
+    scheduler.add_job(_run_all_bots, "interval", minutes=CHECK_EVERY_MINUTES,
                       max_instances=1, coalesce=True)
     scheduler.start()
     app.extensions["scheduler"] = scheduler
@@ -136,7 +143,7 @@ def _start_scheduler(app: Flask) -> None:
     # Learning channels: answer the practice buttons under their posts.
     from news_platform.learning.practice import start_practice_bots
     start_practice_bots()
-    logging.getLogger(__name__).info("Scheduler started: running all active bots every %s minutes", interval)
+    logging.getLogger(__name__).info("Scheduler started: checking every %s minutes for bots that are due", CHECK_EVERY_MINUTES)
 
 
 if __name__ == "__main__":

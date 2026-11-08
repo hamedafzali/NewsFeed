@@ -347,3 +347,27 @@ def test_candidates_keep_only_the_source_language(monkeypatch):
         processor = NewsProcessor({"bot_id": None, "news_language": language})
         monkeypatch.setattr(processor.store, "list_articles", lambda filters: [])
         assert sorted(a["url"] for a in processor._candidates(result)) == sorted(expected)
+
+
+def test_run_every_is_set_per_bot():
+    bot_id = _bot()
+    assert db.get_bot(bot_id)["run_every_minutes"] == 60          # default
+    db.update_bot(bot_id, {"run_every_minutes": 120})
+    assert db.get_bot(bot_id)["run_every_minutes"] == 120
+    db.update_bot(bot_id, {"run_every_minutes": 1})
+    assert db.get_bot(bot_id)["run_every_minutes"] == 5            # floor
+    assert db.get_bot(_bot(run_every_minutes="x"))["run_every_minutes"] == 60
+
+
+def test_bot_is_due_after_its_own_interval():
+    from processor import is_due
+
+    fast, slow = _bot(run_every_minutes=30), _bot(run_every_minutes=240)
+    assert is_due(db.get_bot(fast)) and is_due(db.get_bot(slow))   # never ran
+    for bot_id in (fast, slow):
+        db.log_activity("X", f"bot:{bot_id}", 0, 0, 0)
+    stamp = (datetime.now(timezone.utc) - timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M:%S")
+    with db._conn() as c:
+        c.execute("UPDATE activity SET created_at = ?", (stamp,))
+    assert is_due(db.get_bot(fast))          # 45 min > 30
+    assert not is_due(db.get_bot(slow))      # 45 min < 4 h
