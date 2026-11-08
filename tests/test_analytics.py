@@ -133,3 +133,37 @@ def test_learner_tables_from_before_are_dropped():
     c.close()
     db.init_db()
     assert not _rows("SELECT name FROM sqlite_master WHERE name = 'learners'")
+
+
+def test_bot_page_reports_and_run_trace(monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setenv("SCHEDULE_INTERVAL_MINUTES", "0")
+    monkeypatch.setattr(TelegramPublisher, "chat_username", lambda self: "LangsameNachrichten")
+    from news_platform.app import create_app
+
+    bot_id = db.add_bot({"name": "Deutsch", "city_name": "x", "country_code": "DE", "bot_token": "1:secret-token",
+                         "telegram_chat_id": "-100"})
+    run_id = db.start_run(bot_id, "schedule")
+    db.log_step(run_id, "fetch", "12 articles", None)
+    db.log_llm_call(bot_id, "lesson", "gemini", "gemini-3.5-flash", 200, 100, 50, 900, run_id, '{"ok": 1}', None)
+    db.log_step(run_id, "sent", "posted", {"url": "https://example.com"})
+    db.finish_run(run_id, "success", 12, 1)
+    db.save_member_count(bot_id, "2026-11-08", 5)
+
+    client = create_app().test_client()
+    page = client.get(f"/panel/bot/{bot_id}")
+    assert page.status_code == 200 and b"Run now" in page.data
+    assert client.get("/panel/bot/999").status_code == 404
+
+    data = client.get(f"/panel/api/bots/{bot_id}/report?days=30").get_json()
+    assert data["channel"] == "LangsameNachrichten"
+    assert "secret-token" not in str(data) and "bot_token" not in data["bot"]
+    assert data["report"]["ai"]["requests"] == 1 and data["report"]["runs"]["runs"] == 1
+    assert data["report"]["subscribers"] == [{"day": "2026-11-08", "members": 5}]
+
+    [run] = client.get(f"/panel/api/bots/{bot_id}/runs").get_json()
+    assert run["id"] == run_id and run["ai_calls"] == 1
+    trace = client.get(f"/panel/api/runs/{run_id}").get_json()
+    assert [(i["type"], i.get("step") or i.get("purpose")) for i in trace["timeline"]] == [
+        ("step", "fetch"), ("ai", "lesson"), ("step", "sent")]
+    assert client.get("/panel/api/runs/999").status_code == 404

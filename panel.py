@@ -22,6 +22,16 @@ def index():
     return r
 
 
+@panel.route("/bot/<int:bot_id>")
+def bot_page(bot_id):
+    from flask import make_response
+    if not db.get_bot(bot_id):
+        return make_response("Bot not found", 404)
+    r = make_response(render_template("bot.html", bot_id=bot_id))
+    r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return r
+
+
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 @panel.route("/api/stats")
@@ -215,3 +225,41 @@ def settings():
         "SERVICE_PORT": os.getenv("SERVICE_PORT", "8003"),
         "BOT_MANAGER_URL": os.getenv("BOT_MANAGER_URL", ""),
     })
+
+
+# ── Bot page: reports and run traces ─────────────────────────────────────────
+
+def _public_bot(bot):
+    out = {k: v for k, v in bot.items() if k != "bot_token"}
+    if bot.get("bot_token"):
+        out["bot_token_masked"] = "****" + bot["bot_token"][-4:]
+    return out
+
+
+@panel.route("/api/bots/<int:bot_id>/report")
+def bot_report(bot_id):
+    bot = db.get_bot(bot_id)
+    if not bot:
+        return jsonify({"error": "Not found"}), 404
+    days = min(max(int(request.args.get("days", 7)), 1), 365)
+    channel = None
+    if bot.get("bot_token") and bot.get("telegram_chat_id"):
+        from news_platform.publishing.telegram import TelegramPublisher
+        channel = TelegramPublisher(bot["bot_token"], str(bot["telegram_chat_id"])).chat_username()
+    return jsonify({"bot": _public_bot(bot), "channel": channel, "report": db.bot_report(bot_id, days),
+                    "posts": db.bot_post_list(bot_id, int(request.args.get("posts", 30)))})
+
+
+@panel.route("/api/bots/<int:bot_id>/runs")
+def bot_runs(bot_id):
+    if not db.get_bot(bot_id):
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(db.get_runs(bot_id, min(int(request.args.get("limit", 40)), 200)))
+
+
+@panel.route("/api/runs/<int:run_id>")
+def run_detail(run_id):
+    run = db.get_run(run_id)
+    if not run:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(run)

@@ -500,8 +500,10 @@ def log_llm_call(bot_id: Optional[int], purpose: Optional[str], provider: str, m
                  duration_ms: Optional[int] = None, run_id: Optional[int] = None,
                  response: Optional[str] = None, error: Optional[str] = None) -> None:
     with _conn() as c:
-        c.execute("""INSERT INTO llm_calls (bot_id, purpose, provider, model, status, prompt_tokens,
-                     completion_tokens, duration_ms, run_id, response, error) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        # Millisecond times, so a run's steps and AI calls can be put in order.
+        c.execute("""INSERT INTO llm_calls (ts, bot_id, purpose, provider, model, status, prompt_tokens,
+                     completion_tokens, duration_ms, run_id, response, error)
+                     VALUES (strftime('%Y-%m-%d %H:%M:%f', 'now'),?,?,?,?,?,?,?,?,?,?,?)""",
                   (bot_id, purpose, provider, model, status, prompt_tokens, completion_tokens, duration_ms,
                    run_id, (response or "")[:RESPONSE_KEEP] or None, (error or "")[:500] or None))
 
@@ -523,7 +525,8 @@ def log_step(run_id: Optional[int], step: str, summary: str = "", detail: Any = 
     if detail is not None and not isinstance(detail, str):
         detail = json.dumps(detail, ensure_ascii=False, default=str)
     with _conn() as c:
-        c.execute("INSERT INTO run_steps (run_id, step, summary, detail) VALUES (?,?,?,?)",
+        c.execute("""INSERT INTO run_steps (ts, run_id, step, summary, detail)
+                     VALUES (strftime('%Y-%m-%d %H:%M:%f', 'now'),?,?,?,?)""",
                   (run_id, step, summary[:500], (detail or "")[:RESPONSE_KEEP] or None))
 
 
@@ -566,3 +569,94 @@ def save_reactions(chat_id: str, message_id: int, reactions: Dict[str, int]) -> 
         c.execute("""INSERT OR REPLACE INTO post_reactions (chat_id, message_id, reactions, total, updated_at)
                      VALUES (?,?,?,?,CURRENT_TIMESTAMP)""",
                   (str(chat_id), message_id, json.dumps(reactions, ensure_ascii=False), sum(reactions.values())))
+
+
+# --- Bot page reports ---
+
+def bot_report(bot_id: int, days: int = 7) -> Dict[str, Any]:
+    """Totals and per-day series for one bot over the last `days` days (UTC days)."""
+    since = f"-{int(days)} days"
+    with _conn() as c:
+        def one(sql, *args):
+            return dict(c.execute(sql, args).fetchone())
+
+        def many(sql, *args):
+            return [dict(r) for r in c.execute(sql, args).fetchall()]
+
+        posts = one(f"""SELECT COALESCE(SUM(posted = 1), 0) AS sent,
+                               COALESCE(SUM(posted = 0 AND error LIKE ?), 0) AS skipped,
+                               COALESCE(SUM(posted = 0 AND (error IS NULL OR error NOT LIKE ?)), 0) AS failed
+                        FROM posts WHERE bot_id = ? AND posted_at >= datetime('now', ?)""",
+                    SKIPPED + "%", SKIPPED + "%", bot_id, since)
+        runs = one("""SELECT COUNT(*) AS runs, COALESCE(SUM(status = 'error'), 0) AS failed,
+                             COALESCE(SUM(fetched), 0) AS fetched
+                      FROM runs WHERE bot_id = ? AND started_at >= datetime('now', ?)""", bot_id, since)
+        ai = one("""SELECT COUNT(*) AS requests, COALESCE(SUM(status = 200), 0) AS ok,
+                           COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                           COALESCE(SUM(completion_tokens), 0) AS completion_tokens
+                    FROM llm_calls WHERE bot_id = ? AND ts >= datetime('now', ?)""", bot_id, since)
+        opens = one("""SELECT COALESCE(SUM(o.opens), 0) AS opens FROM lesson_opens o
+                       JOIN lessons l ON l.id = o.lesson_id
+                       WHERE o.bot_id = ? AND l.created_at >= datetime('now', ?)""", bot_id, since)
+        subscribers = many("SELECT day, members FROM channel_stats WHERE bot_id = ? ORDER BY day DESC LIMIT ?",
+                           bot_id, max(days, 2))[::-1]
+        daily_posts = many("""SELECT DATE(posted_at) AS day, SUM(posted = 1) AS sent,
+                                     SUM(posted = 0 AND error LIKE ?) AS skipped,
+                                     SUM(posted = 0 AND (error IS NULL OR error NOT LIKE ?)) AS failed
+                              FROM posts WHERE bot_id = ? AND posted_at >= datetime('now', ?)
+                              GROUP BY day ORDER BY day""", SKIPPED + "%", SKIPPED + "%", bot_id, since)
+        daily_ai = many("""SELECT DATE(ts) AS day, provider, COUNT(*) AS requests, SUM(status = 200) AS ok
+                           FROM llm_calls WHERE bot_id = ? AND ts >= datetime('now', ?)
+                           GROUP BY day, provider ORDER BY day""", bot_id, since)
+        models = many("""SELECT provider, model, purpose, COUNT(*) AS requests, SUM(status = 200) AS ok,
+                                CAST(AVG(duration_ms) AS INTEGER) AS avg_ms,
+                                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                                COALESCE(SUM(completion_tokens), 0) AS completion_tokens
+                         FROM llm_calls WHERE bot_id = ? AND ts >= datetime('now', ?)
+                         GROUP BY provider, model, purpose ORDER BY requests DESC""", bot_id, since)
+        reactions = one("""SELECT COALESCE(SUM(r.total), 0) AS reactions FROM post_reactions r
+                           JOIN posts p ON p.message_id = r.message_id AND p.bot_id = ?
+                           JOIN bots b ON b.id = p.bot_id AND CAST(b.telegram_chat_id AS TEXT) = r.chat_id
+                           WHERE p.posted_at >= datetime('now', ?)""", bot_id, since)
+    return {"days": days, "posts": posts, "runs": runs, "ai": ai, "opens": opens["opens"],
+            "reactions": reactions["reactions"], "subscribers": subscribers, "daily_posts": daily_posts,
+            "daily_ai": daily_ai, "models": models}
+
+
+def bot_post_list(bot_id: int, limit: int = 30) -> List[Dict[str, Any]]:
+    """Recent posts with their Üben taps and reaction totals."""
+    with _conn() as c:
+        rows = c.execute("""SELECT p.id, p.posted_at, p.title, p.url, p.posted, p.error, p.message_id, p.lesson_id,
+                                   o.opens, r.total AS reactions, r.reactions AS reaction_detail
+                            FROM posts p
+                            LEFT JOIN lesson_opens o ON o.lesson_id = p.lesson_id
+                            LEFT JOIN bots b ON b.id = p.bot_id
+                            LEFT JOIN post_reactions r ON r.message_id = p.message_id
+                                 AND r.chat_id = CAST(b.telegram_chat_id AS TEXT)
+                            WHERE p.bot_id = ? ORDER BY p.posted_at DESC, p.id DESC LIMIT ?""",
+                         (bot_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_runs(bot_id: int, limit: int = 40) -> List[Dict[str, Any]]:
+    with _conn() as c:
+        rows = c.execute("""SELECT r.*, (SELECT COUNT(*) FROM llm_calls l WHERE l.run_id = r.id) AS ai_calls
+                            FROM runs r WHERE r.bot_id = ? ORDER BY r.id DESC LIMIT ?""",
+                         (bot_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_run(run_id: int) -> Optional[Dict[str, Any]]:
+    """A run with its steps and AI calls, in time order."""
+    with _conn() as c:
+        run = c.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+        if not run:
+            return None
+        steps = c.execute("SELECT id, ts, step, summary, detail FROM run_steps WHERE run_id = ? ORDER BY id",
+                          (run_id,)).fetchall()
+        calls = c.execute("""SELECT id, ts, purpose, provider, model, status, prompt_tokens, completion_tokens,
+                                    duration_ms, response, error FROM llm_calls WHERE run_id = ? ORDER BY id""",
+                          (run_id,)).fetchall()
+        timeline = [{"type": "step", **dict(s)} for s in steps] + [{"type": "ai", **dict(a)} for a in calls]
+        timeline.sort(key=lambda item: (item["ts"] or "", item["type"] == "ai"))
+        return {**dict(run), "timeline": timeline}
