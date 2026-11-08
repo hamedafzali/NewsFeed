@@ -1,12 +1,17 @@
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 
+import random
+
 import pytest
 
 import database as db
 from news_platform.learning import speech
+from news_platform.learning.exercises import build_exercises
 from news_platform.learning.grammar import GERMAN_TOPICS, find_topic
-from news_platform.learning.lesson import LessonWriter, format_lesson, headword_forms
+from news_platform.learning.lesson import (CAPTION_MAX, LessonWriter, caption_length, format_post, format_practice,
+                                           headword_forms, lesson_from_record, lesson_to_record)
+from news_platform.learning.practice import PracticeBot
 from news_platform.models import PipelineResult
 from news_platform.pipeline.llm import MistralClient
 from news_platform.publishing.telegram import SendResult, TelegramPublisher
@@ -44,13 +49,6 @@ def _lesson_json(**overrides):
         ],
         "grammar_topic": "dass",
         "grammar_example": "Er sagte, **dass** viele Iraner kämpfen.",  # paraphrased, not copied
-        "quiz": [
-            {"q": "Wer hat den Preis bekommen?", "options": ["Der Bürgermeister", "Reza Pahlavi", "Ein Arzt"],
-             "answer": 1},
-            {"q": "Wo wurde der Preis vergeben?", "options": ["In Berlin", "In Frankfurt", "In Teheran"], "answer": 1},
-            {"q": "Was sagt Pahlavi über Präsident Macron?", "options": ["a", "Macron unterstützt Wahlen", "c"],
-             "answer": 1},  # answer not in the text
-        ],
         "summary_en": "Reza Pahlavi received a freedom award in Frankfurt.",
     }
     out.update(overrides)
@@ -93,10 +91,6 @@ def test_check_keeps_what_holds_up_and_drops_the_rest():
     # The paraphrased example is replaced by the real sentence from the text.
     assert lesson["grammar"]["topic"].id == "dass"
     assert lesson["grammar"]["example"].startswith("Er sagte, dass viele Iraner")
-    # The question about something not in the text is dropped; answers survive shuffling.
-    assert [q["q"] for q in lesson["quiz"]] == ["Wer hat den Preis bekommen?", "Wo wurde der Preis vergeben?"]
-    for question, right in zip(lesson["quiz"], ["Reza Pahlavi", "In Frankfurt"]):
-        assert question["options"][question["answer"]] == right
 
 
 def test_check_sends_back_a_grammar_topic_the_text_does_not_show():
@@ -105,15 +99,14 @@ def test_check_sends_back_a_grammar_topic_the_text_does_not_show():
     assert lesson is None and "grammar topic" in problem
 
 
-def test_check_strips_markdown_and_sends_back_long_sentences():
+def test_check_strips_markdown_and_sends_back_long_sentences_and_texts():
     lesson, _ = LessonWriter(MistralClient(api_key="k")).check(
-        _lesson_json(text=TEXT.replace("Reza Pahlavi", "**Reza Pahlavi**"),
-                     quiz=[{"q": "Wer hat den **Preis** bekommen?",
-                            "options": ["Der Bürgermeister", "**Reza Pahlavi**", "Ein Arzt"], "answer": 1},
-                           {"q": "Wo wurde der Preis vergeben?", "options": ["In Berlin", "In Frankfurt", "In Rom"],
-                            "answer": 1}]), "de", "fa")
-    assert "*" not in lesson["text"] and "Reza Pahlavi hat den Preis" in lesson["text"]
-    assert all("*" not in q["q"] and not any("*" in o for o in q["options"]) for q in lesson["quiz"])
+        _lesson_json(title="**Preis** für Freiheit", text=TEXT.replace("Reza Pahlavi", "**Reza Pahlavi**")), "de", "fa")
+    assert "*" not in lesson["text"] + lesson["title"] and "Reza Pahlavi hat den Preis" in lesson["text"]
+
+    lesson, problem = LessonWriter(MistralClient(api_key="k")).check(
+        _lesson_json(text=" ".join([TEXT] * 3)), "de", "fa")
+    assert lesson is None and "850 characters" in problem
 
     long_sentence = ("In dieser Übung haben viele Behörden, Hilfsorganisationen und Betreiber kritischer "
                      "Infrastruktur wie Energieversorger, Krankenhäuser und Logistiker drei Tage lang zusammen "
@@ -169,41 +162,117 @@ def test_fact_check_ignores_errors_that_do_not_quote_the_lesson(monkeypatch):
     assert writer.write("t", "article", "de", "B1", "fa") is not None
 
 
-def test_format_lesson_escapes_and_has_all_parts():
-    lesson, _ = LessonWriter(MistralClient(api_key="k")).check(_lesson_json(title="A <b> & B"), "de", "fa")
-    lesson["level"] = "B1"
-    message = format_lesson(lesson, "https://x.test/a?b=1&c=2", "tagesschau", "de", "fa")
-    assert "A &lt;b&gt; &amp; B" in message
+def _checked_lesson(**overrides):
+    lesson, problem = LessonWriter(MistralClient(api_key="k")).check(_lesson_json(**overrides), "de", "fa")
+    assert problem is None
+    lesson.update(level="B1", language="de")
+    return lesson
+
+
+def test_post_is_title_and_text_within_the_caption_limit():
+    post = format_post(_checked_lesson(title="A <b> & B"))
+    assert post.startswith("🗞 <b>A &lt;b&gt; &amp; B</b>") and TEXT in post and "#LangsameNachrichten" in post
+    assert "Quelle" not in post and "http" not in post
+    assert caption_length(post) <= CAPTION_MAX
+
+
+def test_practice_message_has_words_and_grammar():
+    message = format_practice(_checked_lesson(), "fa")
     assert "der Preis, -e" in message and "جایزه" in message
     assert "Nebensatz mit" in message and find_topic("de", "dass").explanation_fa in message
-    assert 'href="https://x.test/a?b=1&amp;c=2"' in message and "#B1" in message
-    assert len(message) < 4096
+
+
+def test_lesson_survives_storage():
+    lesson = _checked_lesson()
+    stored = db.get_lesson(db.save_lesson(None, lesson_to_record(lesson)))
+    assert lesson_from_record(stored) == lesson
+
+
+# --- Exercises ---
+
+FDP_LESSON = {
+    "language": "de", "level": "B1", "title": "FDP sucht nach Lösungen",
+    "text": ("Die FDP trifft sich heute zu einem digitalen Parteitag. Nach vielen Wahlniederlagen ist die Partei in "
+             "einer tiefen Krise. Kubicki hat gesagt, dass er etwas anderes erwartet hat. Deshalb sollen die "
+             "Mitglieder mehr Geld in einen Kampagnenfonds einzahlen. Die FDP muss sparen, da sie weniger "
+             "staatliche Unterstützung erhält."),
+    "vocabulary": [
+        {"word": "der Parteitag, -e", "meaning": "کنگره‌ی حزب", "en": "party congress"},
+        {"word": "die Krise, -n", "meaning": "بحران", "en": "crisis"},
+        {"word": "erwarten, hat erwartet", "meaning": "انتظار داشتن", "en": "to expect"},
+        {"word": "einzahlen, hat eingezahlt", "meaning": "واریز کردن", "en": "to pay in"},
+        {"word": "die Unterstützung, -en", "meaning": "حمایت", "en": "support"},
+        {"word": "sparen, hat gespart", "meaning": "پس‌انداز کردن", "en": "to save"},
+    ],
+    "grammar": {"topic": find_topic("de", "perfekt"), "example": "Kubicki hat gesagt, dass er etwas anderes erwartet hat."},
+}
+
+
+def test_exercises_are_about_words_and_grammar_and_right_by_construction():
+    for seed in range(20):
+        exercises = build_exercises(FDP_LESSON, "fa", rng=random.Random(seed))
+        kinds = [e["kind"] for e in exercises]
+        assert len(exercises) == 6 and {"meaning", "gap", "article", "perfekt"} <= set(kinds)
+        for e in exercises:
+            right = e["options"][e["answer"]]
+            assert len(set(e["options"])) == len(e["options"]) and len(e["q"]) <= 255
+            if e["kind"] == "meaning":
+                word = next(w for w in FDP_LESSON["vocabulary"] if w["word"].split(",")[0] in e["q"])
+                assert right == word["meaning"]
+            elif e["kind"] == "gap":
+                sentence = e["q"].split("\n\n", 1)[1]
+                assert "___" in sentence and sentence.replace("___", right) in FDP_LESSON["text"]
+            elif e["kind"] == "article":
+                noun = e["q"].rsplit("___ ", 1)[1]
+                assert f"{right} {noun}," in " ".join(w["word"] for w in FDP_LESSON["vocabulary"])
+            else:
+                assert right.startswith("hat ") and right.split()[-1] in " ".join(
+                    w["word"] for w in FDP_LESSON["vocabulary"])
+
+
+def test_gap_options_do_not_give_the_answer_away():
+    for seed in range(20):
+        for e in build_exercises(FDP_LESSON, "fa", rng=random.Random(seed)):
+            if e["kind"] == "gap":
+                # nouns are offered with nouns, verbs with verbs
+                assert len({o[0].isupper() for o in e["options"]}) == 1
+
+
+def test_spoken_intro_has_the_date_and_channel():
+    from datetime import datetime
+    intro = speech.spoken_intro("Deutsch mit Nachrichten", "de", datetime(2026, 11, 8, 9))
+    assert intro == "Heute ist Sonntag, der achte November 2026. Sie hören kurze Nachrichten von Deutsch mit Nachrichten."
+    assert speech.ordinal_de(31) == "einunddreißigste" and speech.ordinal_de(3) == "dritte"
 
 
 # --- Telegram ---
 
+class _Resp:
+    status_code = 200
+    headers = {"content-type": "application/json"}
+
+    def json(self):
+        return {"ok": True, "result": {"message_id": 7}}
+
+
 def test_quiz_and_audio_requests(monkeypatch):
     calls = []
-
-    class Resp:
-        status_code = 200
-        headers = {"content-type": "application/json"}
-
-        def json(self):
-            return {"ok": True, "result": {"message_id": 7}}
-
     monkeypatch.setattr("news_platform.publishing.telegram.requests.post",
-                        lambda url, **kw: calls.append((url.rsplit("/", 1)[1], kw)) or Resp())
+                        lambda url, **kw: calls.append((url.rsplit("/", 1)[1], kw)) or _Resp())
     publisher = TelegramPublisher("1:a", "-100")
-    assert publisher.send_quiz("Wer?", ["A", "B", "C"], 2).ok
-    assert publisher.send_audio(b"mp3", title="T", performer="Katja", duration=40).ok
+    assert publisher.send_quiz("Wer?", ["A", "B", "C"], 2, explanation="weil").ok
+    button = {"inline_keyboard": [[{"text": "Üben", "url": "https://t.me/x?start=l1"}]]}
+    assert publisher.send_audio(b"mp3", title="T", performer="Katja", caption="c", duration=40,
+                                reply_markup=button).ok
     (method, quiz), (audio_method, audio) = calls
     assert method == "sendPoll" and quiz["json"]["type"] == "quiz" and quiz["json"]["correct_option_id"] == 2
     assert quiz["json"]["options"] == [{"text": "A"}, {"text": "B"}, {"text": "C"}]
+    assert quiz["json"]["explanation"] == "weil"
     assert audio_method == "sendAudio" and audio["files"]["audio"][1] == b"mp3" and audio["data"]["duration"] == "40"
+    assert '"url": "https://t.me/x?start=l1"' in audio["data"]["reply_markup"]
 
 
-# --- Processor ---
+# --- Processor and bot ---
 
 def test_new_bots_are_news_channels_at_b1():
     bot = db.get_bot(db.add_bot({"name": "T", "city_name": "x", "country_code": "DE",
@@ -221,28 +290,32 @@ class _Stored:
 
 
 class _FakePublisher:
-    def __init__(self):
+    def __init__(self, chat_id="-100"):
+        self.chat_id = chat_id
         self.sent = []
 
-    def send_message(self, text, link_preview=True):
-        self.sent.append(("message", text))
+    def bot_username(self):
+        return "PixelWazardsNewsBot"
+
+    def send_message(self, text, link_preview=True, reply_markup=None):
+        self.sent.append(("message", text, reply_markup))
         return SendResult(ok=True)
 
     def send_audio(self, data, **kwargs):
-        self.sent.append(("audio", kwargs["performer"]))
+        self.sent.append(("audio", kwargs, kwargs.get("reply_markup")))
         return SendResult(ok=True)
 
-    def send_quiz(self, question, options, correct):
-        self.sent.append(("quiz", question))
+    def send_quiz(self, question, options, correct, explanation=""):
+        self.sent.append(("quiz", question, None))
         return SendResult(ok=True)
 
 
-def test_learning_channel_posts_text_audio_and_quiz(monkeypatch):
-    bot_id = db.add_bot({"name": "L", "city_name": "x", "country_code": "DE", "bot_token": "1:a",
-                         "telegram_chat_id": "-100", "news_language": "de", "mode": "learning"})
+def test_learning_channel_posts_one_audio_with_text_and_practice_button(monkeypatch):
+    bot_id = db.add_bot({"name": "Deutsch mit Nachrichten", "city_name": "x", "country_code": "DE",
+                         "bot_token": "1:a", "telegram_chat_id": "-100", "news_language": "de", "mode": "learning"})
     processor = NewsProcessor({"bot_id": bot_id, "bot_token": "1:a", "telegram_chat_id": "-100",
                                "news_language": "de", "target_language": "fa", "mode": "learning",
-                               "level": "B1", "max_posts_per_day": 2})
+                               "level": "B1", "max_posts_per_day": 2, "channel_name": "Deutsch mit Nachrichten"})
     processor.publisher = _FakePublisher()
     article = {"url": "https://tagesschau.test/a", "title": "Pahlavi erhält Preis", "source_name": "tagesschau",
                "language": "de", "published_at": format_datetime(datetime.now(timezone.utc) - timedelta(hours=1)),
@@ -251,17 +324,51 @@ def test_learning_channel_posts_text_audio_and_quiz(monkeypatch):
                         lambda **kw: PipelineResult(articles=[_Stored(article)], processed=1))
     monkeypatch.setattr(processor.store, "list_articles", lambda filters: [])
     monkeypatch.setattr(processor.lessons.client, "api_key", "k")
-    monkeypatch.setattr(processor.lessons.client, "complete_json", lambda *a, **k: _lesson_json())
-    monkeypatch.setattr(speech, "synthesize", lambda text, language: speech.Audio(b"mp3", "Katja", 40))
+    monkeypatch.setattr(processor.lessons.client, "complete_json",
+                        lambda messages, **k: {"errors": []} if messages[0]["content"].startswith("You fact-check")
+                        else _lesson_json())
+    spoken = []
+    monkeypatch.setattr(speech, "synthesize",
+                        lambda text, language: spoken.append(text) or speech.Audio(b"mp3", "Katja", 40))
 
     result = processor.process_news()
 
     assert result.status == "success" and result.posted == 1
-    kinds = [kind for kind, _ in processor.publisher.sent]
-    assert kinds == ["message", "audio", "quiz", "quiz"]
-    assert ("audio", "Langsam gelesen · Katja") in processor.publisher.sent
+    [(kind, audio, markup)] = processor.publisher.sent  # one post, nothing else in the channel
+    assert kind == "audio" and audio["caption"].startswith("🗞 <b>Preis für Freiheit")
+    assert audio["performer"] == "Deutsch mit Nachrichten · Katja"
+    assert spoken[0].startswith("Heute ist ") and "Sie hören kurze Nachrichten von Deutsch mit Nachrichten." in spoken[0]
+    url = markup["inline_keyboard"][0][0]["url"]
+    assert url.startswith("https://t.me/PixelWazardsNewsBot?start=l")
+    stored = db.get_lesson(int(url.rsplit("l", 1)[1]))
+    assert stored["exercises"] and stored["explain_language"] == "fa"
     post = db.get_posts(bot_id=bot_id)[0]
     assert post["posted"] and post["summary_en"].startswith("Reza Pahlavi")
+
+
+def test_practice_bot_sends_the_lesson_privately(monkeypatch):
+    import time
+    record = lesson_to_record(_checked_lesson())
+    record.update(explain_language="fa", exercises=build_exercises(FDP_LESSON, "fa"))
+    lesson_id = db.save_lesson(None, record)
+    sent = []
+    monkeypatch.setattr("news_platform.learning.practice.TelegramPublisher",
+                        lambda token, chat_id: sent.append(_FakePublisher(chat_id)) or sent[-1])
+    bot = PracticeBot("1:a")
+    message = {"chat": {"id": 42, "type": "private"}, "date": int(time.time()), "text": f"/start l{lesson_id}"}
+
+    bot.handle({"update_id": 1, "message": message})
+    publisher = sent[-1]
+    assert publisher.chat_id == "42"
+    kinds = [k for k, _, _ in publisher.sent]
+    assert kinds == ["message", "message"] + ["quiz"] * len(record["exercises"])
+    assert "جایزه" in publisher.sent[0][1]
+
+    bot.handle({"update_id": 2, "message": message})  # tapped twice: nothing new
+    assert sent[-1].sent == []
+    bot.handle({"update_id": 3, "message": {**message, "chat": {"id": 7, "type": "group"}}})  # not private
+    bot.handle({"update_id": 4, "message": {**message, "text": "/start l99999"}})
+    assert "پیدا نشد" in sent[-1].sent[0][1]
 
 
 def test_learning_channel_needs_a_mistral_key():

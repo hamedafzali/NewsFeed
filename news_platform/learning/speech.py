@@ -10,6 +10,7 @@ import logging
 import os
 import random
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -31,6 +32,43 @@ VOICES: Dict[str, List[Tuple[str, str]]] = {
 }
 INTRO = Path(__file__).parent / "assets" / "intro.mp3"
 BITRATE = 48000  # bits per second of both the intro and the voice
+
+WEEKDAYS_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+MONTHS_DE = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
+             "November", "Dezember"]
+_ORDINALS_DE = ["erste", "zweite", "dritte", "vierte", "fünfte", "sechste", "siebte", "achte", "neunte", "zehnte",
+                "elfte", "zwölfte", "dreizehnte", "vierzehnte", "fünfzehnte", "sechzehnte", "siebzehnte",
+                "achtzehnte", "neunzehnte"]
+_UNITS_DE = ["", "einund", "zweiund", "dreiund", "vierund", "fünfund", "sechsund", "siebenund", "achtund", "neunund"]
+
+
+def ordinal_de(day: int) -> str:
+    """Day of the month as a spoken ordinal: 8 -> "achte", 21 -> "einundzwanzigste"."""
+    if day < 20:
+        return _ORDINALS_DE[day - 1]
+    return _UNITS_DE[day % 10] + ("zwanzigste" if day < 30 else "dreißigste")
+
+
+def spoken_intro(channel: str, language: str = "de", when: Optional[datetime] = None) -> str:
+    """What the voice says before the news: today's date and the channel's name."""
+    when = when or datetime.now(_berlin())
+    if language == "de":
+        return (f"Heute ist {WEEKDAYS_DE[when.weekday()]}, der {ordinal_de(when.day)} {MONTHS_DE[when.month - 1]} "
+                f"{when.year}. Sie hören kurze Nachrichten von {channel}.")
+    return f"Today is {when.strftime('%A, %B')} {when.day}, {when.year}. You are listening to {channel}."
+
+
+def lesson_script(title: str, text: str, channel: str, language: str = "de") -> str:
+    """The full read-aloud text; the blank lines give short pauses."""
+    return f"{spoken_intro(channel, language)}\n\n{title}.\n\n{text}"
+
+
+def _berlin():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(os.getenv("TZ_LESSONS", "Europe/Berlin"))
+    except Exception:
+        return timezone.utc
 
 
 @dataclass

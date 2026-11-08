@@ -1,5 +1,6 @@
 """Telegram channel publisher using the plain Bot HTTP API (no async library needed)."""
 import html
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -21,11 +22,27 @@ class SendResult:
 
 
 class TelegramPublisher:
+    _usernames: dict = {}  # bot token -> @username, looked up once
+
     def __init__(self, bot_token: str, chat_id: str, timeout: int = 15):
         self.bot_token = bot_token
         self.chat_id = chat_id
         self.timeout = timeout
         self.logger = logging.getLogger(__name__)
+
+    def bot_username(self) -> Optional[str]:
+        """The bot's @username (without @), for t.me links; None if Telegram can't be reached."""
+        if self.bot_token not in self._usernames:
+            try:
+                resp = requests.get(f"{API_BASE}/bot{self.bot_token}/getMe", timeout=self.timeout)
+                username = resp.json().get("result", {}).get("username")
+            except Exception as exc:
+                self.logger.error("Telegram getMe failed: %s", exc)
+                return None
+            if not username:
+                return None
+            self._usernames[self.bot_token] = username
+        return self._usernames[self.bot_token]
 
     def test_token(self) -> bool:
         try:
@@ -68,32 +85,41 @@ class TelegramPublisher:
             "disable_web_page_preview": False,
         })
 
-    def send_message(self, text: str, link_preview: bool = True) -> SendResult:
-        return self._call("sendMessage", {
+    def send_message(self, text: str, link_preview: bool = True,
+                     reply_markup: Optional[dict] = None) -> SendResult:
+        payload = {
             "chat_id": self.chat_id,
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": not link_preview,
-        })
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        return self._call("sendMessage", payload)
 
     def send_audio(self, data: bytes, title: str, performer: str = "", caption: str = "",
-                   duration: Optional[int] = None, filename: str = "lesson.mp3") -> SendResult:
+                   duration: Optional[int] = None, filename: str = "lesson.mp3",
+                   reply_markup: Optional[dict] = None) -> SendResult:
         payload = {"chat_id": self.chat_id, "title": title[:64], "performer": performer[:64],
-                   "caption": caption[:1024], "parse_mode": "HTML"}
+                   "caption": caption, "parse_mode": "HTML"}
         if duration:
             payload["duration"] = str(duration)
+        if reply_markup:  # multipart form fields are strings
+            payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
         return self._call("sendAudio", payload, files={"audio": (filename, data, "audio/mpeg")})
 
-    def send_quiz(self, question: str, options: list, correct: int) -> SendResult:
-        # Polls in channels are always anonymous.
-        return self._call("sendPoll", {
+    def send_quiz(self, question: str, options: list, correct: int, explanation: str = "") -> SendResult:
+        payload = {
             "chat_id": self.chat_id,
             "question": question,
             "options": [{"text": o} for o in options],
             "type": "quiz",
             "correct_option_id": correct,
-            "is_anonymous": True,
-        })
+            "is_anonymous": True,  # required in channels; in a private chat nobody else sees it anyway
+        }
+        if explanation:  # shown after answering
+            payload["explanation"] = explanation[:200]
+        return self._call("sendPoll", payload)
 
     @staticmethod
     def format_message(title: str, summary: str, url: str, source: str, language: str = "fa") -> str:

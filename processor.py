@@ -18,7 +18,10 @@ from typing import Any, Dict, List, Optional
 import database as db
 from news_platform.config import get_settings
 from news_platform.learning import speech
-from news_platform.learning.lesson import LessonWriter, format_lesson
+from news_platform.learning.exercises import build_exercises
+from news_platform.learning.lesson import (CAPTION_MAX, LessonWriter, caption_length, format_post,
+                                           lesson_to_record, practice_button)
+from news_platform.learning.practice import practice_link
 from news_platform.pipeline import NewsPipeline
 from news_platform.pipeline.ingestion import strip_publisher_suffix
 from news_platform.pipeline.llm import PostWriter
@@ -308,20 +311,31 @@ class NewsProcessor:
         return data
 
     def _send_lesson(self, article: Dict[str, Any], lesson: Dict[str, Any]):
-        """Lesson text, then the slow audio, then the quiz. Only the text has to go through."""
-        language = article.get("language") or "de"
+        """One post: the slow audio with the text as its caption and a button that opens the
+        practice (words, grammar, exercises) privately in the bot."""
+        language = lesson.get("language") or article.get("language") or "de"
         explain = self.config.get("target_language", "fa")
-        audio = speech.synthesize(f"{lesson['title']}.\n\n{lesson['text']}", language)
-        sent = self.publisher.send_message(format_lesson(lesson, article["url"], article.get("source_name", ""),
-                                                         language, explain))
-        if not sent.ok:
-            return sent
-        if audio:
-            self.publisher.send_audio(audio.data, title=lesson["title"], performer=f"Langsam gelesen · {audio.voice}",
-                                      caption="🎧 Langsam gelesen – hören und mitlesen", duration=audio.duration)
-        for question in lesson["quiz"]:
-            self.publisher.send_quiz(question["q"], question["options"], question["answer"])
-        return sent
+        channel = self.config.get("channel_name") or "Deutsch mit Nachrichten"
+
+        record = lesson_to_record(lesson)
+        record.update(explain_language=explain, url=article["url"],
+                      exercises=build_exercises(lesson, explain))
+        lesson_id = db.save_lesson(self._bot_id(), record)
+        username = self.publisher.bot_username()
+        markup = None
+        if username and record["exercises"]:
+            markup = {"inline_keyboard": [[{"text": practice_button(lesson, explain),
+                                            "url": practice_link(username, lesson_id)}]]}
+
+        post = format_post(lesson)
+        audio = speech.synthesize(speech.lesson_script(lesson["title"], lesson["text"], channel, language), language)
+        if audio and caption_length(post) <= CAPTION_MAX:
+            sent = self.publisher.send_audio(audio.data, title=lesson["title"], performer=f"{channel} · {audio.voice}",
+                                             caption=post, duration=audio.duration, reply_markup=markup)
+            if sent.ok:
+                return sent
+            self.logger.warning("lesson audio failed (%s); posting the text alone", sent.error)
+        return self.publisher.send_message(post, link_preview=False, reply_markup=markup)
 
     def _source_language(self) -> Optional[str]:
         language = (self.config.get("news_language") or "").strip().lower()
@@ -437,6 +451,7 @@ def _run_bot(bot: Dict[str, Any]) -> NewsResult:
         "max_posts_per_run": bot.get("max_posts_per_run", 2),
         "max_posts_per_day": bot.get("max_posts_per_day", 2),
         "mode": bot.get("mode") or "news",
+        "channel_name": bot.get("name") or "",
         "level": bot.get("level") or "B1",
         "sources": sources,
     }

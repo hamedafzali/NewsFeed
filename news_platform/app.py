@@ -132,6 +132,10 @@ def _start_scheduler(app: Flask) -> None:
                       max_instances=1, coalesce=True)
     scheduler.start()
     app.extensions["scheduler"] = scheduler
+
+    # Learning channels: answer the practice buttons under their posts.
+    from news_platform.learning.practice import start_practice_bots
+    start_practice_bots()
     logging.getLogger(__name__).info("Scheduler started: running all active bots every %s minutes", interval)
 
 

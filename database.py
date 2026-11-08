@@ -4,6 +4,7 @@ Central database manager for panel data: bots (channels), activity log, posts, f
 Backed by panel.db — separate from the article store (news_platform.db) so channel
 configuration survives article-store rebuilds.
 """
+import json
 import os
 import sqlite3
 from datetime import date
@@ -103,6 +104,14 @@ def init_db():
             );
 
             CREATE INDEX IF NOT EXISTS idx_posts_bot_url ON posts(bot_id, url);
+
+            -- Lessons of learning channels (JSON), opened in the bot from the post's practice button.
+            CREATE TABLE IF NOT EXISTS lessons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER,
+                data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         _migrate(c)
 
@@ -203,6 +212,20 @@ def get_activity_chart(days: int = 7) -> List[Dict]:
             ORDER BY day
         """, (f"-{days} days",)).fetchall()
         return [dict(r) for r in rows]
+
+
+# --- Lessons ---
+
+def save_lesson(bot_id: Optional[int], data: Dict[str, Any]) -> int:
+    with _conn() as c:
+        return c.execute("INSERT INTO lessons (bot_id, data) VALUES (?, ?)",
+                         (bot_id, json.dumps(data, ensure_ascii=False))).lastrowid
+
+
+def get_lesson(lesson_id: int) -> Optional[Dict[str, Any]]:
+    with _conn() as c:
+        row = c.execute("SELECT data FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
+        return json.loads(row["data"]) if row else None
 
 
 # --- Posts ---

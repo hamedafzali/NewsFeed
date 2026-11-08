@@ -1,9 +1,10 @@
-"""Turns a news article into a language lesson: simple text, vocabulary, a grammar
-note and a short quiz.
+"""Turns a news article into a language lesson: a simple text (posted with its audio),
+plus vocabulary and a grammar note for practice in the bot.
 
-Mistral writes the text, picks the words and writes the questions; the checks here
-drop what doesn't hold up (words that aren't in the text, questions whose answer
-isn't in it) and send the rest back with what to fix, like the post writer does.
+Mistral writes the text and picks the words and the grammar topic; the checks here
+drop what doesn't hold up (words that aren't in the text, a topic no sentence shows)
+and send the rest back with what to fix, like the post writer does. The practice
+questions are built from the lesson by code (exercises.py), not by the model.
 """
 import html
 import json
@@ -25,9 +26,8 @@ LEVELS = list(LEVEL_GUIDE)
 # Longest sentence (in words) a level allows; longer ones go back to be split.
 MAX_SENTENCE_WORDS = {"A1": 10, "A2": 13, "B1": 18, "B2": 25}
 MIN_WORDS, MAX_WORDS = 5, 8
-MIN_QUESTIONS, MAX_QUESTIONS = 2, 3
-# Telegram limits for quiz polls.
-POLL_QUESTION_MAX, POLL_OPTION_MAX = 255, 100
+# The text goes out as the caption of the audio, which Telegram limits to 1024 characters.
+MIN_TEXT_CHARS, MAX_TEXT_CHARS, MAX_TITLE_CHARS = 250, 850, 90
 NOT_TARGET_SCRIPT = re.compile(r"[؀-ۿЀ-ӿ一-鿿]")
 LATIN = re.compile(r"[A-Za-z]")
 ARTICLES = {"der", "die", "das", "sich"}
@@ -44,12 +44,17 @@ def _words(text: str) -> List[str]:
     return re.findall(r"[a-zäöüß]+", (text or "").lower())
 
 
+def stem_of(form: str) -> str:
+    """Prefix that inflected forms of a word share ("Krise" -> "kri", "Wahlniederlage" -> "wahlniederl")."""
+    form = form.lower()
+    return form[:max(4, len(form) - 3)] if len(form) > 5 else form
+
+
 def _in_text(form: str, text_words: List[str]) -> bool:
     """Is this word (or an inflected form of it) used in the text?"""
-    form = form.lower()
     if len(form) < 3:
         return False
-    stem = form[:max(4, len(form) - 3)] if len(form) > 5 else form
+    stem = stem_of(form)
     return any(w.startswith(stem) for w in text_words)
 
 
@@ -86,7 +91,7 @@ class LessonWriter:
                     {"role": "user", "content": f"Title: {title}\n\nArticle:\n{(text or title)[:5000]}"}]
         for _ in range(3):
             try:
-                out = self.client.complete_json(messages, temperature=0.3, max_tokens=1800)
+                out = self.client.complete_json(messages, temperature=0.3, max_tokens=1500)
             except LlmUnavailable as exc:
                 self.logger.warning("lesson writer unavailable: %s", exc)
                 return None
@@ -102,9 +107,10 @@ class LessonWriter:
                     return None
                 if not errors:
                     lesson["level"] = level
+                    lesson["language"] = language
                     return lesson
                 problem = ("These statements in your text are wrong or not in the article: "
-                           + " | ".join(errors) + ". Fix them in the text, vocabulary and quiz.")
+                           + " | ".join(errors) + ". Fix them in the text and the vocabulary.")
             self.logger.warning("lesson rejected (%s): %s %s", problem, out.get("title"), sorted(out)[:8])
             messages += [{"role": "assistant", "content": json.dumps(out, ensure_ascii=False)},
                          {"role": "user", "content": f"{problem} Reply with the corrected JSON."}]
@@ -159,20 +165,17 @@ class LessonWriter:
             f"From the article, write JSON with these keys:\n"
             f'"title": a short {lang} headline in simple words.\n'
             f'"text": the news retold in simple {lang} at CEFR level {level}: {LEVEL_GUIDE[level]}. '
-            f"At most {MAX_SENTENCE_WORDS[level]} words per sentence. "
-            "Only facts from the article; no opinions. Correct, natural grammar. Plain text: no markdown, "
-            "no asterisks.\n"
+            f"At most {MAX_SENTENCE_WORDS[level]} words per sentence and at most {MAX_TEXT_CHARS} characters "
+            "in total. Only facts from the article; no opinions. Say who said what exactly as the article does. "
+            "Correct, natural grammar. Plain text: no markdown, no asterisks.\n"
             f'"vocabulary": {MAX_WORDS - 1} useful words that appear in your text. Each: '
             '{"de": nouns with article and plural ("die Wahl, -en"; uncountable: "die Gewalt (Sg.)"), '
             'verbs as infinitive + Perfekt ("beschließen, hat beschlossen"), other words as in a dictionary; '
             f'"fa": the usual {explain} dictionary translation in {explain} script only; '
-            '"en": the English meaning}}.\n'
+            '"en": the English meaning}.\n'
             '"grammar_topic": the id of the first topic in this list that a sentence of your text clearly shows:\n'
             f"{topic_list}\n"
             '"grammar_example": that sentence, copied exactly from your text.\n'
-            f'"quiz": {MAX_QUESTIONS} comprehension questions in simple {lang}, each '
-            '{"q": question, "options": 3 short options, "answer": index of the correct option}. '
-            "The answer must be stated in your text.\n"
             '"summary_en": one English sentence saying what the story is about.\n'
             "Reply with JSON only. If the article is not news (an ad, a video page with no text, a live ticker), "
             'reply {"skip": true}.'
@@ -182,8 +185,11 @@ class LessonWriter:
         """(lesson, None) when usable after dropping weak parts, else (None, feedback for the model)."""
         title = _plain(out.get("title"))
         text = _plain(out.get("text"))
-        if not title or len(text) < 250:
+        if not title or len(text) < MIN_TEXT_CHARS:
             return None, "The title is missing or the text is too short."
+        if len(title) > MAX_TITLE_CHARS or len(text) > MAX_TEXT_CHARS:
+            return None, (f"Your text has {len(text)} characters and your title {len(title)}; keep the text to at "
+                          f"most {MAX_TEXT_CHARS} characters and the title to {MAX_TITLE_CHARS}. Leave out details.")
         if NOT_TARGET_SCRIPT.search(title + text):
             return None, f"Write the title and text only in {LANGUAGE_NAMES.get(language, language)}."
         sentences = [s.strip() for s in SENTENCE_END.split(text) if s.strip()]
@@ -208,6 +214,8 @@ class LessonWriter:
             if not any(_in_text(f, text_words) for f in headword_forms(entry)):
                 missing.append(entry)
                 continue
+            if any(w["word"] == entry for w in vocabulary):
+                continue
             vocabulary.append({"word": entry, "meaning": meaning, "en": english})
         vocabulary = vocabulary[:MAX_WORDS]
         if len(vocabulary) < MIN_WORDS:
@@ -219,22 +227,11 @@ class LessonWriter:
             return None, ("No sentence of your text shows the grammar topic you chose. "
                           "Choose another topic from the list and copy a sentence that shows it.")
 
-        quiz = []
-        for item in out.get("quiz") or []:
-            question = self._question(item, text_words)
-            if question:
-                quiz.append(question)
-        quiz = quiz[:MAX_QUESTIONS]
-        if len(quiz) < MIN_QUESTIONS:
-            return None, (f"Write {MAX_QUESTIONS} questions with 3 short options each whose correct answer "
-                          "is stated in your text.")
-
         return {
             "title": title,
             "text": text,
             "vocabulary": vocabulary,
             "grammar": {"topic": topic, "example": example},
-            "quiz": quiz,
             "summary_en": _plain(out.get("summary_en")),
         }, None
 
@@ -252,58 +249,74 @@ class LessonWriter:
         match = next((s for s in sentences if topic.shown_by(s)), None)
         return (topic, match) if match else (None, None)
 
-    @staticmethod
-    def _question(item: Any, text_words: List[str]) -> Optional[Dict[str, Any]]:
-        if not isinstance(item, dict):
-            return None
-        q = _plain(item.get("q"))
-        options = [_plain(o) for o in (item.get("options") or []) if _plain(o)]
-        try:
-            answer = int(item.get("answer"))
-        except (TypeError, ValueError):
-            return None
-        if (not q or len(q) > POLL_QUESTION_MAX or not 3 <= len(options) <= 4 or len(set(options)) != len(options)
-                or any(len(o) > POLL_OPTION_MAX for o in options) or not 0 <= answer < len(options)):
-            return None
-        # The right answer has to come from the text, not from the article or the model.
-        key_words = [w for w in _words(options[answer]) if len(w) >= 4]
-        if key_words and sum(_in_text(w, text_words) for w in key_words) < len(key_words) / 2:
-            return None
-        correct = options[answer]
-        random.shuffle(options)  # models put the right answer in the same place every time
-        return {"q": q, "options": options, "answer": options.index(correct)}
 
+# --- Storage: lessons are kept as JSON so the bot can open them later ---
+
+def lesson_to_record(lesson: Dict[str, Any]) -> Dict[str, Any]:
+    record = {k: v for k, v in lesson.items() if k != "grammar"}
+    record["grammar"] = {"topic": lesson["grammar"]["topic"].id, "example": lesson["grammar"]["example"]}
+    return record
+
+
+def lesson_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    lesson = dict(record)
+    grammar = record.get("grammar") or {}
+    lesson["grammar"] = {"topic": find_topic(record.get("language", "de"), grammar.get("topic", "")),
+                         "example": grammar.get("example", "")}
+    return lesson
+
+
+# --- Telegram messages ---
 
 LABELS = {
-    "de": {"words": "Wörter", "grammar": "Grammatik", "source": "Quelle", "level": "Niveau",
-           "series": "Langsame Nachrichten", "listen": "Langsam gelesen – hören und mitlesen"},
+    "de": {"words": "Wörter", "grammar": "Grammatik", "level": "Niveau", "series": "Langsame Nachrichten",
+           "practice": "Üben"},
 }
-EXPLAIN_LABELS = {"fa": {"words": "لغات", "grammar": "گرامر"}, "en": {"words": "Words", "grammar": "Grammar"}}
+EXPLAIN_LABELS = {
+    "fa": {"words": "لغات", "grammar": "گرامر", "practice": "تمرین"},
+    "en": {"words": "Words", "grammar": "Grammar", "practice": "Practice"},
+}
+CAPTION_MAX = 1024
 
 
-def format_lesson(lesson: Dict[str, Any], url: str, source: str, language: str = "de",
-                  explain_language: str = "fa") -> str:
-    """The lesson's main message (Telegram HTML)."""
-    def e(value: str) -> str:
-        return html.escape(value, quote=False)
-    labels = LABELS.get(language, LABELS["de"])
-    explain = EXPLAIN_LABELS.get(explain_language, EXPLAIN_LABELS["en"])
+def _e(value: str) -> str:
+    return html.escape(value or "", quote=False)
+
+
+def format_post(lesson: Dict[str, Any]) -> str:
+    """The channel post: title and text, sent as the caption of the audio (Telegram HTML)."""
+    labels = LABELS.get(lesson.get("language", "de"), LABELS["de"])
     level = lesson.get("level", "B1")
-    lines = [f"🗞 <b>{e(lesson['title'])}</b>",
-             f"<i>{labels['level']} {e(level)} · {labels['series']}</i>",
-             "",
-             e(lesson["text"]),
-             "",
-             f"📚 <b>{labels['words']} · {explain['words']}</b>"]
+    return "\n".join([f"🗞 <b>{_e(lesson['title'])}</b>",
+                      "",
+                      _e(lesson["text"]),
+                      "",
+                      f"<i>{labels['level']} {_e(level)}</i> · #{labels['series'].replace(' ', '')}"])
+
+
+def caption_length(message: str) -> int:
+    """Length Telegram counts for a caption: the text without HTML tags."""
+    return len(html.unescape(re.sub(r"<[^>]+>", "", message)))
+
+
+def practice_button(lesson: Dict[str, Any], explain_language: str = "fa") -> str:
+    labels = LABELS.get(lesson.get("language", "de"), LABELS["de"])
+    explain = EXPLAIN_LABELS.get(explain_language, EXPLAIN_LABELS["en"])
+    return f"✏️ {labels['practice']} · {explain['practice']}"
+
+
+def format_practice(lesson: Dict[str, Any], explain_language: str = "fa") -> str:
+    """The lesson's words and grammar note, sent in the bot before the exercises."""
+    labels = LABELS.get(lesson.get("language", "de"), LABELS["de"])
+    explain = EXPLAIN_LABELS.get(explain_language, EXPLAIN_LABELS["en"])
+    lines = [f"🗞 <b>{_e(lesson['title'])}</b>", "", f"📚 <b>{labels['words']} · {explain['words']}</b>"]
     for word in lesson["vocabulary"]:
-        english = f" ({e(word['en'])})" if word.get("en") else ""
-        lines.append(f"▪️ <b>{e(word['word'])}</b> — {e(word['meaning'])}{english}")
-    topic: GrammarTopic = lesson["grammar"]["topic"]
-    lines += ["",
-              f"✏️ <b>{labels['grammar']} · {explain['grammar']}: {e(topic.name)}</b>",
-              e(topic.explanation_fa),
-              f"🔹 <i>{e(lesson['grammar']['example'])}</i>",
-              "",
-              f'📰 {labels["source"]}: <a href="{html.escape(url or "")}">{e(source or "")}</a>',
-              f"#{e(level)} #{labels['series'].replace(' ', '')}"]
+        english = f" ({_e(word['en'])})" if word.get("en") else ""
+        lines.append(f"▪️ <b>{_e(word['word'])}</b> — {_e(word['meaning'])}{english}")
+    topic: Optional[GrammarTopic] = lesson["grammar"]["topic"]
+    if topic:
+        lines += ["",
+                  f"✏️ <b>{labels['grammar']} · {explain['grammar']}: {_e(topic.name)}</b>",
+                  _e(topic.explanation_fa),
+                  f"🔹 <i>{_e(lesson['grammar']['example'])}</i>"]
     return "\n".join(lines)
