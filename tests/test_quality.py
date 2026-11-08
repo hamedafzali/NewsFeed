@@ -472,5 +472,21 @@ def test_openai_style_client_retries_plainly_and_waits_on_rate_limit(monkeypatch
     responses[:] = [_Resp(429), _Resp(429)]
     with pytest.raises(LlmUnavailable):
         client.complete_json([{"role": "user", "content": "x"}])
-    with pytest.raises(LlmUnavailable, match="out of quota"):
+    with pytest.raises(LlmUnavailable, match="resting"):
         client.complete_json([{"role": "user", "content": "x"}])
+
+
+def test_provider_that_is_down_is_skipped_for_a_while(monkeypatch):
+    calls = []
+
+    def fake_post(url, headers, json, timeout):
+        calls.append(url)
+        return _Resp(503)
+
+    monkeypatch.setattr("news_platform.pipeline.llm.requests.post", fake_post)
+    client = OpenAICompatClient("gemini", api_key="x")
+    with pytest.raises(LlmUnavailable, match="503"):
+        client.complete_json([{"role": "user", "content": "x"}])
+    with pytest.raises(LlmUnavailable, match="resting"):
+        client.complete_json([{"role": "user", "content": "x"}])
+    assert len(calls) == 1

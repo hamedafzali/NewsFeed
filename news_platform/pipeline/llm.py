@@ -171,9 +171,9 @@ def parse_json_object(text: str) -> Optional[Dict[str, Any]]:
 PROVIDERS = {
     # name: (endpoint, key variable, model variable, default model, extra request fields)
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-               "GEMINI_API_KEY", "GEMINI_MODEL", "gemini-2.5-flash", {"reasoning_effort": "none"}),
+               "GEMINI_API_KEY", "GEMINI_MODEL", "gemini-3.8-flash", {"reasoning_effort": "low"}),
     "groq": ("https://api.groq.com/openai/v1/chat/completions",
-             "GROQ_API_KEY", "GROQ_MODEL", "llama-3.3-70b-versatile", {}),
+             "GROQ_API_KEY", "GROQ_MODEL", "openai/gpt-oss-120b", {"reasoning_effort": "low"}),
 }
 
 
@@ -183,8 +183,9 @@ class OpenAICompatClient:
     _cooling_until: Dict[str, float] = {}
     _lock = threading.Lock()
     MAX_RETRY_WAIT = 60.0
+    REST_AFTER_OUTAGE = 300.0  # overloaded (5xx) or not answering: skip the provider this long
 
-    def __init__(self, name: str, api_key: Optional[str] = None, model: Optional[str] = None, timeout: int = 60):
+    def __init__(self, name: str, api_key: Optional[str] = None, model: Optional[str] = None, timeout: int = 45):
         url, key_var, model_var, default_model, extra = PROVIDERS[name]
         self.name, self.url, self.extra = name, url, extra
         self.api_key = (api_key if api_key is not None else os.getenv(key_var, "")).strip()
@@ -202,7 +203,7 @@ class OpenAICompatClient:
         if not self.enabled:
             raise LlmUnavailable(f"{self.name}: no API key")
         if OpenAICompatClient._cooling_until.get(self.name, 0) > time.time():
-            raise LlmUnavailable(f"{self.name}: out of quota for now")
+            raise LlmUnavailable(f"{self.name}: resting after rate limit or outage")
         payload = {"model": self.model, "messages": messages, "temperature": temperature,
                    "max_tokens": max_tokens, "response_format": {"type": "json_object"}, **self.extra}
         resp = self._post(payload)
@@ -216,10 +217,12 @@ class OpenAICompatClient:
                 time.sleep(wait + 0.5)
                 resp = self._post(payload)
         if resp.status_code == 429:
-            OpenAICompatClient._cooling_until[self.name] = time.time() + self.cooldown
+            self._rest(self.cooldown)
             raise LlmUnavailable(f"{self.name}: rate limited")
         if resp.status_code in (401, 403):
             raise LlmUnavailable(f"{self.name}: API key rejected ({resp.status_code})")
+        if resp.status_code >= 500:
+            self._rest(self.REST_AFTER_OUTAGE)
         if resp.status_code != 200:
             raise LlmUnavailable(f"{self.name} returned {resp.status_code}")
         try:
@@ -241,7 +244,12 @@ class OpenAICompatClient:
             return requests.post(self.url, headers={"Authorization": f"Bearer {self.api_key}"},
                                  json=payload, timeout=self.timeout)
         except requests.RequestException as exc:
+            self._rest(self.REST_AFTER_OUTAGE)
             raise LlmUnavailable(f"{self.name} request failed: {exc}") from exc
+
+    def _rest(self, seconds: float) -> None:
+        OpenAICompatClient._cooling_until[self.name] = max(OpenAICompatClient._cooling_until.get(self.name, 0),
+                                                            time.time() + seconds)
 
 
 def _retry_after(headers) -> Optional[float]:

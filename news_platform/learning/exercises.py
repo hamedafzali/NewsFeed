@@ -85,8 +85,8 @@ def build_exercises(lesson: Dict[str, Any], explain_language: str = "fa", count:
             return None  # a capitalised verb at the start of a sentence would give the answer away
         others = [found[w["word"]][1] for w in words if w is not word and found[w["word"]][1]]
         others = [o for o in dict.fromkeys(others) if o.lower() != token.lower()]
-        same_kind = [o for o in others if o[0].isupper() == noun]  # nouns with nouns, others with others
-        pool = same_kind if len(same_kind) >= 2 else others
+        # Nouns with nouns, other words with other words: a verb among two nouns gives the answer away.
+        pool = [o for o in others if o[0].isupper() == noun]
         if len(pool) < 2:
             return None
         blanked = re.sub(rf"\b{re.escape(token)}\b", "___", sentence, count=1)
