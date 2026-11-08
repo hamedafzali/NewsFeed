@@ -19,6 +19,7 @@ class SendResult:
     ok: bool
     error: Optional[str] = None
     message_id: Optional[int] = None
+    poll_id: Optional[str] = None
 
 
 class TelegramPublisher:
@@ -64,6 +65,17 @@ class TelegramPublisher:
                 return None
             self._chat_usernames[key] = data.get("result", {}).get("username")
         return self._chat_usernames[key]
+
+    def member_count(self) -> Optional[int]:
+        """Subscribers of the channel (needs the bot to be in it), or None."""
+        try:
+            resp = requests.get(f"{API_BASE}/bot{self.bot_token}/getChatMemberCount",
+                                params={"chat_id": self.chat_id}, timeout=self.timeout)
+            data = resp.json()
+        except Exception as exc:
+            self.logger.warning("Telegram getChatMemberCount failed: %s", exc)
+            return None
+        return data.get("result") if data.get("ok") else None
 
     def test_token(self) -> bool:
         try:
@@ -142,14 +154,17 @@ class TelegramPublisher:
             payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
         return self._call("sendVideo", payload, files={"video": (filename, data, "video/mp4")})
 
-    def send_quiz(self, question: str, options: list, correct: int, explanation: str = "") -> SendResult:
+    def send_quiz(self, question: str, options: list, correct: int, explanation: str = "",
+                  anonymous: bool = True) -> SendResult:
         payload = {
             "chat_id": self.chat_id,
             "question": question,
             "options": [{"text": o} for o in options],
             "type": "quiz",
             "correct_option_id": correct,
-            "is_anonymous": True,  # required in channels; in a private chat nobody else sees it anyway
+            # Channels need anonymous polls. In a private chat a non-anonymous one lets the bot
+            # receive the answer (poll_answer), for the learner's progress; nobody else sees it.
+            "is_anonymous": anonymous,
         }
         if explanation:  # shown after answering
             payload["explanation"] = explanation[:200]
@@ -176,7 +191,9 @@ class TelegramPublisher:
                 resp = requests.post(url, json=payload, timeout=self.timeout)
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             if resp.status_code == 200 and data.get("ok"):
-                return SendResult(ok=True, message_id=data.get("result", {}).get("message_id"))
+                result = data.get("result") or {}
+                return SendResult(ok=True, message_id=result.get("message_id"),
+                                  poll_id=(result.get("poll") or {}).get("id"))
             if resp.status_code == 429 and not retried:
                 retry_after = int(data.get("parameters", {}).get("retry_after", 3))
                 self.logger.warning("Telegram rate limit, waiting %ss", retry_after)

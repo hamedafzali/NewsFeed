@@ -92,6 +92,18 @@ SQLite tables:
 
 Indexes cover source/date, topic/date, language, quality, and content hash.
 
+`panel.db` also records, for the bot pages and reports:
+
+- `runs` / `run_steps`: each bot run step by step (fetched, candidates, article, skip, format, sent).
+- `llm_calls`: every AI request (bot, run, purpose lesson/check/post, provider, model, status, tokens, time, answer).
+  Run steps and AI answers are pruned after 30 days; the counts stay.
+- `posts.message_id` / `posts.lesson_id`: the link to each channel post.
+- `channel_stats`: the channel's subscriber count, once a day.
+- `learners`, `practice_events`, `quiz_polls`, `quiz_answers`: who used a learning bot, Üben taps and quiz
+  answers (private quizzes are non-anonymous so the bot gets the answer). New users get a privacy note;
+  `/loeschen` deletes everything stored about them.
+- `post_reactions`: latest reaction counts of channel posts (learning bots, which poll their updates).
+
 ## Development
 
 ```bash

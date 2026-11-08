@@ -24,7 +24,8 @@ from news_platform.learning.lesson import (CAPTION_MAX, LessonWriter, caption_le
 from news_platform.learning.practice import practice_link
 from news_platform.pipeline import NewsPipeline
 from news_platform.pipeline.ingestion import strip_publisher_suffix
-from news_platform.pipeline.llm import PostWriter
+from news_platform.pipeline import llm
+from news_platform.pipeline.llm import PostWriter, tagged
 from news_platform.pipeline.ranking import age_hours
 from news_platform.pipeline.translation import Translator
 from news_platform.publishing import TelegramPublisher
@@ -75,6 +76,8 @@ class NewsProcessor:
         self.learning = bot_config.get("mode") == "learning"
         self.max_age_hours = float(os.getenv("MAX_ARTICLE_AGE_HOURS", "36"))
         self.logger = logging.getLogger(__name__)
+        self.run_id = bot_config.get("run_id")
+        self._sent_lesson_id: Optional[int] = None
         self.publisher = None
         if bot_config.get("bot_token") and bot_config.get("telegram_chat_id"):
             self.publisher = TelegramPublisher(bot_config["bot_token"], str(bot_config["telegram_chat_id"]))
@@ -92,6 +95,7 @@ class NewsProcessor:
                 sources=self._sources(),
             )
             bot_id = self._bot_id()
+            self._step("fetch", f"{result.processed} articles fetched from {len(self._sources() or [])} feeds")
             if self.learning and self.publisher and not self.lessons.enabled:
                 return NewsResult(status="error", error_message="Learning channels need MISTRAL_API_KEY",
                                   duration=time.time() - started)
@@ -99,6 +103,9 @@ class NewsProcessor:
             attempt_cap = min(max_posts * 3, self._tries_left(bot_id))
             recent_summaries = self._recent_summaries(bot_id)
             candidates = self._candidates(result, self._recent_titles(bot_id))
+            self._step("candidates", f"{len(candidates)} recent articles; may post {max_posts} now",
+                       [{"title": a.get("title"), "url": a.get("url"), "source": a.get("source_name"),
+                         "relevance": a.get("relevance_score")} for a in candidates[:40]])
             posted = 0
             attempts = 0
             consecutive_failures = 0
@@ -115,6 +122,8 @@ class NewsProcessor:
                     if attempts >= attempt_cap:
                         break
                     attempts += 1
+                    self._sent_lesson_id = None
+                    self._step("article", article["title"], {"url": article["url"], "source": article.get("source_name")})
                     data = self._lesson(article) if self.learning else self._enrich_summaries(article)
                     skip_reason = "no clean post / not news" if data is None else None
                     if data is not None:
@@ -123,6 +132,7 @@ class NewsProcessor:
                             skip_reason = f"same story as {repeat}"
                     if skip_reason:
                         self.logger.info("skipping %s: %s", article["url"], skip_reason)
+                        self._step("skip", skip_reason, {"url": article["url"]})
                         if bot_id is not None:
                             db.log_post(bot_id=bot_id, title=article["title"], url=article["url"],
                                         summary_en=(data or {}).get("summary_en", ""), summary_fa="",
@@ -141,6 +151,8 @@ class NewsProcessor:
                         )
                     data["posted"] = send.ok
                     data["post_error"] = send.error
+                    self._step("sent" if send.ok else "send failed", article["title"] if send.ok else (send.error or ""),
+                               {"url": article["url"], "message_id": send.message_id, "lesson_id": self._sent_lesson_id})
                     if bot_id is not None:
                         db.log_post(
                             bot_id=bot_id,
@@ -151,6 +163,8 @@ class NewsProcessor:
                             relevance_score=article.get("relevance_score"),
                             posted=send.ok,
                             error=send.error,
+                            message_id=send.message_id,
+                            lesson_id=self._sent_lesson_id,
                         )
                     if send.ok:
                         posted += 1
@@ -341,6 +355,7 @@ class NewsProcessor:
         record.update(explain_language=explain, url=article["url"],
                       exercises=build_exercises(lesson, explain))
         lesson_id = db.save_lesson(self._bot_id(), record)
+        self._sent_lesson_id = lesson_id
         username = self.publisher.bot_username()
         markup = None
         if username and record["exercises"]:
@@ -355,11 +370,13 @@ class NewsProcessor:
                 sent = self.publisher.send_video(clip.data, caption=post, duration=clip.duration or audio.duration,
                                                  width=clip.width, height=clip.height, reply_markup=markup)
                 if sent.ok:
+                    self._step("format", "video (news photo + audio)")
                     return sent
                 self.logger.warning("lesson video failed (%s); posting the audio alone", sent.error)
             sent = self.publisher.send_audio(audio.data, title=lesson["title"], performer=f"{channel} · {audio.voice}",
                                              caption=post, duration=audio.duration, reply_markup=markup)
             if sent.ok:
+                self._step("format", "audio")
                 return sent
             self.logger.warning("lesson audio failed (%s); posting the text alone", sent.error)
         return self.publisher.send_message(post, link_preview=False, reply_markup=markup)
@@ -380,6 +397,12 @@ class NewsProcessor:
     def _sources(self) -> Optional[List[Dict[str, Any]]]:
         sources = self.config.get("sources")
         return sources if sources else None
+
+    def _step(self, step: str, summary: str = "", detail: Any = None) -> None:
+        try:
+            db.log_step(self.run_id, step, summary, detail)
+        except Exception:
+            self.logger.exception("could not record run step")
 
     def _bot_id(self) -> Optional[int]:
         try:
@@ -488,7 +511,32 @@ def is_due(bot: Dict[str, Any], now: Optional[datetime] = None) -> bool:
     return now - last_time >= timedelta(minutes=minutes) - timedelta(seconds=30)
 
 
-def run_bot(bot: Dict[str, Any]) -> NewsResult:
+def _store_llm_call(call: Dict[str, Any]) -> None:
+    db.log_llm_call(call.get("bot_id"), call.get("purpose"), call["provider"], call["model"], call["status"],
+                    call.get("prompt_tokens"), call.get("completion_tokens"), call.get("duration_ms"),
+                    run_id=call.get("run_id"), response=call.get("response"), error=call.get("error"))
+
+
+if _store_llm_call not in llm.usage_listeners:
+    llm.usage_listeners.append(_store_llm_call)
+
+
+def record_member_counts(bots: List[Dict[str, Any]]) -> None:
+    """Once a (Berlin) day per bot: the channel's subscriber count, and old traces pruned."""
+    day = datetime.now(speech._berlin()).strftime("%Y-%m-%d")
+    pruned = False
+    for bot in bots:
+        if not (bot.get("bot_token") and bot.get("telegram_chat_id")) or db.has_member_count(bot["id"], day):
+            continue
+        count = TelegramPublisher(bot["bot_token"], str(bot["telegram_chat_id"])).member_count()
+        if count is not None:
+            db.save_member_count(bot["id"], day, count)
+        if not pruned:
+            db.prune_traces()
+            pruned = True
+
+
+def run_bot(bot: Dict[str, Any], trigger: str = "manual") -> NewsResult:
     """Run the full pipeline for a bot row from the panel database.
 
     Used by both the panel's manual Run button and the background scheduler.
@@ -498,12 +546,12 @@ def run_bot(bot: Dict[str, Any]) -> NewsResult:
     if not lock.acquire(blocking=False):
         return NewsResult(status="error", error_message="This bot is already running")
     try:
-        return _run_bot(bot)
+        return _run_bot(bot, trigger)
     finally:
         lock.release()
 
 
-def _run_bot(bot: Dict[str, Any]) -> NewsResult:
+def _run_bot(bot: Dict[str, Any], trigger: str = "manual") -> NewsResult:
     sources = []
     for feed in db.get_global_feeds(active_only=True):
         sources.append({"url": feed["url"], "name": feed["name"],
@@ -529,7 +577,11 @@ def _run_bot(bot: Dict[str, Any]) -> NewsResult:
         "sources": sources,
     }
     started = time.time()
-    result = NewsProcessor(config).process_news()
+    run_id = db.start_run(bot["id"], trigger)
+    config["run_id"] = run_id
+    with tagged(bot_id=bot["id"], run_id=run_id):
+        result = NewsProcessor(config).process_news()
+    db.finish_run(run_id, result.status, result.processed, result.posted, result.error_message)
     db.log_activity(
         city_name=bot["city_name"],
         source=f"bot:{bot['id']}",

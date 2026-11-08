@@ -121,6 +121,7 @@ def build_exercises(lesson: Dict[str, Any], explain_language: str = "fa", count:
                 continue
             question = makers[kind](word)
             if question:
+                question["word"] = word["word"]  # for progress: which words a learner gets wrong
                 used.add((kind, word["word"]))
                 exercises.append(question)
                 return True

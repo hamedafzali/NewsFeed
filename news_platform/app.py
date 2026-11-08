@@ -122,13 +122,18 @@ def _start_scheduler(app: Flask) -> None:
 
     def _run_all_bots():
         import database as paneldb
-        from processor import is_due, run_bot
+        from processor import is_due, record_member_counts, run_bot
 
-        for bot in paneldb.get_bots(active_only=True, include_secrets=True):
+        bots = paneldb.get_bots(active_only=True, include_secrets=True)
+        try:
+            record_member_counts(bots)
+        except Exception:
+            logger.exception("subscriber count failed")
+        for bot in bots:
             try:
                 if not is_due(bot):
                     continue
-                result = run_bot(bot)
+                result = run_bot(bot, trigger="schedule")
                 logger.info("scheduled run bot=%s posted=%s processed=%s status=%s",
                             bot["id"], result.posted, result.processed, result.status)
             except Exception:

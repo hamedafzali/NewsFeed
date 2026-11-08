@@ -15,7 +15,8 @@ import re
 from typing import Any, Dict, List, Optional
 
 from news_platform.learning.grammar import GrammarTopic, find_topic, topics_for
-from news_platform.pipeline.llm import LANGUAGE_NAMES, PERSIAN_CHARS, LlmUnavailable, MistralClient, make_client
+from news_platform.pipeline.llm import (LANGUAGE_NAMES, PERSIAN_CHARS, LlmUnavailable, MistralClient, make_client,
+                                         tagged)
 
 LEVEL_GUIDE = {
     "A1": "5-6 very short main clauses, present tense, only everyday words",
@@ -116,7 +117,8 @@ class LessonWriter:
                     {"role": "user", "content": f"Title: {title}\n\nArticle:\n{(text or title)[:5000]}"}]
         for _ in range(3):
             try:
-                out = self.client.complete_json(messages, temperature=0.3, max_tokens=1500)
+                with tagged(purpose="lesson"):
+                    out = self.client.complete_json(messages, temperature=0.3, max_tokens=1500)
             except LlmUnavailable as exc:
                 self.logger.warning("lesson writer unavailable: %s", exc)
                 return None
@@ -158,7 +160,8 @@ class LessonWriter:
         out = None
         for _ in range(2):  # a long answer sometimes comes back cut off: ask once more
             try:
-                out = self.checker.complete_json(messages, temperature=0.0, max_tokens=1200)
+                with tagged(purpose="check"):
+                    out = self.checker.complete_json(messages, temperature=0.0, max_tokens=1200)
                 break
             except LlmUnavailable as exc:
                 self.logger.warning("lesson fact check unavailable: %s", exc)

@@ -35,6 +35,8 @@ def _migrate(c):
         "ALTER TABLE bots ADD COLUMN run_every_minutes INTEGER NOT NULL DEFAULT 60",
         "ALTER TABLE bots ADD COLUMN post_from_hour INTEGER NOT NULL DEFAULT 8",
         "ALTER TABLE bots ADD COLUMN post_until_hour INTEGER NOT NULL DEFAULT 20",
+        "ALTER TABLE posts ADD COLUMN message_id INTEGER",
+        "ALTER TABLE posts ADD COLUMN lesson_id INTEGER",
     ]
     for sql in migrations:
         try:
@@ -117,6 +119,108 @@ def init_db():
                 bot_id INTEGER,
                 data TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Analytics. Every AI request (one row per HTTP call, failed ones too).
+            CREATE TABLE IF NOT EXISTS llm_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                bot_id INTEGER,
+                purpose TEXT,
+                provider TEXT,
+                model TEXT,
+                status INTEGER,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                duration_ms INTEGER,
+                run_id INTEGER,
+                response TEXT,
+                error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_llm_calls_ts ON llm_calls(ts);
+
+            -- What each bot run did, step by step (fetched, candidates, AI answers, skips, sends).
+            CREATE TABLE IF NOT EXISTS runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER,
+                trigger TEXT,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                finished_at TIMESTAMP,
+                status TEXT,
+                fetched INTEGER,
+                posted INTEGER,
+                error TEXT
+            );
+            CREATE TABLE IF NOT EXISTS run_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                step TEXT NOT NULL,
+                summary TEXT,
+                detail TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id);
+
+            -- Channel subscribers, one count per bot and (Berlin) day.
+            CREATE TABLE IF NOT EXISTS channel_stats (
+                bot_id INTEGER NOT NULL,
+                day TEXT NOT NULL,
+                members INTEGER NOT NULL,
+                PRIMARY KEY (bot_id, day)
+            );
+
+            -- People who used a learning bot privately. Deleted with /loeschen.
+            CREATE TABLE IF NOT EXISTS learners (
+                bot_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                first_name TEXT,
+                language_code TEXT,
+                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (bot_id, user_id)
+            );
+
+            -- Üben taps (kind 'open') and similar learner actions.
+            CREATE TABLE IF NOT EXISTS practice_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                bot_id INTEGER,
+                lesson_id INTEGER,
+                user_id INTEGER NOT NULL,
+                kind TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_practice_user ON practice_events(user_id);
+
+            -- Each quiz sent privately, so its answer can be matched to lesson and word.
+            CREATE TABLE IF NOT EXISTS quiz_polls (
+                poll_id TEXT PRIMARY KEY,
+                bot_id INTEGER,
+                lesson_id INTEGER,
+                user_id INTEGER NOT NULL,
+                position INTEGER,
+                kind TEXT,
+                word TEXT,
+                correct_option INTEGER,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS quiz_answers (
+                poll_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                option INTEGER,
+                correct INTEGER,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (poll_id, user_id)
+            );
+
+            -- Latest reaction counts of channel posts (Telegram sends totals, not who reacted).
+            CREATE TABLE IF NOT EXISTS post_reactions (
+                chat_id TEXT NOT NULL,
+                message_id INTEGER NOT NULL,
+                reactions TEXT NOT NULL,
+                total INTEGER NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (chat_id, message_id)
             );
         """)
         _migrate(c)
@@ -259,6 +363,12 @@ def save_lesson(bot_id: Optional[int], data: Dict[str, Any]) -> int:
                          (bot_id, json.dumps(data, ensure_ascii=False))).lastrowid
 
 
+def lesson_bot_id(lesson_id: int) -> Optional[int]:
+    with _conn() as c:
+        row = c.execute("SELECT bot_id FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
+        return row["bot_id"] if row else None
+
+
 def get_lesson(lesson_id: int) -> Optional[Dict[str, Any]]:
     with _conn() as c:
         row = c.execute("SELECT data FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
@@ -269,14 +379,16 @@ def get_lesson(lesson_id: int) -> Optional[Dict[str, Any]]:
 
 def log_post(bot_id: Optional[int], title: str, url: str, summary_en: str,
              summary_fa: str, sentiment: str = None, relevance_score: float = None,
-             posted: bool = True, error: str = None):
+             posted: bool = True, error: str = None, message_id: Optional[int] = None,
+             lesson_id: Optional[int] = None):
     with _conn() as c:
         c.execute(
             """INSERT INTO posts
-               (bot_id, title, url, summary_en, summary_fa, sentiment, relevance_score, posted, error)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+               (bot_id, title, url, summary_en, summary_fa, sentiment, relevance_score, posted, error,
+                message_id, lesson_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (bot_id, title, url, summary_en, summary_fa, sentiment, relevance_score,
-             1 if posted else 0, error),
+             1 if posted else 0, error, message_id, lesson_id),
         )
 
 
@@ -409,3 +521,128 @@ def get_all_settings() -> Dict[str, str]:
     with _conn() as c:
         rows = c.execute("SELECT key, value FROM settings").fetchall()
         return {r[0]: r[1] for r in rows}
+
+
+# --- Analytics ---
+
+RESPONSE_KEEP = 12000  # characters of an AI answer kept for the run trace
+
+
+def log_llm_call(bot_id: Optional[int], purpose: Optional[str], provider: str, model: str, status: int,
+                 prompt_tokens: Optional[int] = None, completion_tokens: Optional[int] = None,
+                 duration_ms: Optional[int] = None, run_id: Optional[int] = None,
+                 response: Optional[str] = None, error: Optional[str] = None) -> None:
+    with _conn() as c:
+        c.execute("""INSERT INTO llm_calls (bot_id, purpose, provider, model, status, prompt_tokens,
+                     completion_tokens, duration_ms, run_id, response, error) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                  (bot_id, purpose, provider, model, status, prompt_tokens, completion_tokens, duration_ms,
+                   run_id, (response or "")[:RESPONSE_KEEP] or None, (error or "")[:500] or None))
+
+
+def start_run(bot_id: Optional[int], trigger: str = "schedule") -> int:
+    with _conn() as c:
+        return c.execute("INSERT INTO runs (bot_id, trigger) VALUES (?, ?)", (bot_id, trigger)).lastrowid
+
+
+def finish_run(run_id: int, status: str, fetched: int = 0, posted: int = 0, error: Optional[str] = None) -> None:
+    with _conn() as c:
+        c.execute("""UPDATE runs SET finished_at = CURRENT_TIMESTAMP, status = ?, fetched = ?, posted = ?, error = ?
+                     WHERE id = ?""", (status, fetched, posted, error, run_id))
+
+
+def log_step(run_id: Optional[int], step: str, summary: str = "", detail: Any = None) -> None:
+    if run_id is None:
+        return
+    if detail is not None and not isinstance(detail, str):
+        detail = json.dumps(detail, ensure_ascii=False, default=str)
+    with _conn() as c:
+        c.execute("INSERT INTO run_steps (run_id, step, summary, detail) VALUES (?,?,?,?)",
+                  (run_id, step, summary[:500], (detail or "")[:RESPONSE_KEEP] or None))
+
+
+def prune_traces(days: int = 30) -> None:
+    """Run traces and AI answers are bulky: keep them for a month (counts stay)."""
+    cutoff = f"-{int(days)} days"
+    with _conn() as c:
+        c.execute("DELETE FROM run_steps WHERE run_id IN (SELECT id FROM runs WHERE started_at < datetime('now', ?))",
+                  (cutoff,))
+        c.execute("UPDATE llm_calls SET response = NULL WHERE response IS NOT NULL AND ts < datetime('now', ?)",
+                  (cutoff,))
+
+
+def has_member_count(bot_id: int, day: str) -> bool:
+    with _conn() as c:
+        return c.execute("SELECT 1 FROM channel_stats WHERE bot_id = ? AND day = ?",
+                         (bot_id, day)).fetchone() is not None
+
+
+def save_member_count(bot_id: int, day: str, members: int) -> None:
+    with _conn() as c:
+        c.execute("INSERT OR REPLACE INTO channel_stats (bot_id, day, members) VALUES (?,?,?)",
+                  (bot_id, day, members))
+
+
+def bot_id_for_token(token: str) -> Optional[int]:
+    with _conn() as c:
+        row = c.execute("SELECT id FROM bots WHERE bot_token = ? ORDER BY id LIMIT 1", (token,)).fetchone()
+        return row["id"] if row else None
+
+
+def touch_learner(bot_id: Optional[int], user: Dict[str, Any]) -> bool:
+    """Record a private user of a learning bot; True the first time we see them."""
+    if bot_id is None or not user.get("id"):
+        return False
+    with _conn() as c:
+        known = c.execute("SELECT 1 FROM learners WHERE bot_id = ? AND user_id = ?",
+                          (bot_id, user["id"])).fetchone()
+        if known:
+            c.execute("""UPDATE learners SET first_name = ?, language_code = ?, last_seen = CURRENT_TIMESTAMP
+                         WHERE bot_id = ? AND user_id = ?""",
+                      (user.get("first_name"), user.get("language_code"), bot_id, user["id"]))
+            return False
+        c.execute("INSERT INTO learners (bot_id, user_id, first_name, language_code) VALUES (?,?,?,?)",
+                  (bot_id, user["id"], user.get("first_name"), user.get("language_code")))
+        return True
+
+
+def log_practice(bot_id: Optional[int], lesson_id: Optional[int], user_id: int, kind: str = "open") -> None:
+    with _conn() as c:
+        c.execute("INSERT INTO practice_events (bot_id, lesson_id, user_id, kind) VALUES (?,?,?,?)",
+                  (bot_id, lesson_id, user_id, kind))
+
+
+def save_quiz_poll(poll_id: str, bot_id: Optional[int], lesson_id: Optional[int], user_id: int, position: int,
+                   kind: Optional[str], word: Optional[str], correct_option: int) -> None:
+    with _conn() as c:
+        c.execute("""INSERT OR REPLACE INTO quiz_polls
+                     (poll_id, bot_id, lesson_id, user_id, position, kind, word, correct_option)
+                     VALUES (?,?,?,?,?,?,?,?)""",
+                  (poll_id, bot_id, lesson_id, user_id, position, kind, word, correct_option))
+
+
+def save_quiz_answer(poll_id: str, user_id: int, option: Optional[int]) -> Optional[bool]:
+    """Store an answer to one of our quizzes; returns whether it was right (None: unknown poll)."""
+    with _conn() as c:
+        poll = c.execute("SELECT correct_option FROM quiz_polls WHERE poll_id = ?", (poll_id,)).fetchone()
+        if not poll:
+            return None
+        correct = option is not None and option == poll["correct_option"]
+        c.execute("INSERT OR REPLACE INTO quiz_answers (poll_id, user_id, option, correct) VALUES (?,?,?,?)",
+                  (poll_id, user_id, option, 1 if correct else 0))
+        return correct
+
+
+def save_reactions(chat_id: str, message_id: int, reactions: Dict[str, int]) -> None:
+    with _conn() as c:
+        c.execute("""INSERT OR REPLACE INTO post_reactions (chat_id, message_id, reactions, total, updated_at)
+                     VALUES (?,?,?,?,CURRENT_TIMESTAMP)""",
+                  (str(chat_id), message_id, json.dumps(reactions, ensure_ascii=False), sum(reactions.values())))
+
+
+def delete_learner(user_id: int) -> None:
+    """Remove everything stored about one person (all bots)."""
+    with _conn() as c:
+        c.execute("DELETE FROM quiz_answers WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM quiz_polls WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM practice_events WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM learners WHERE user_id = ?", (user_id,))

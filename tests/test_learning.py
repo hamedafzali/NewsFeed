@@ -327,11 +327,11 @@ class _FakePublisher:
 
     def send_video(self, data, **kwargs):
         self.sent.append(("video", kwargs, kwargs.get("reply_markup")))
-        return SendResult(ok=True)
+        return SendResult(ok=True, message_id=77)
 
-    def send_quiz(self, question, options, correct, explanation=""):
-        self.sent.append(("quiz", question, None))
-        return SendResult(ok=True)
+    def send_quiz(self, question, options, correct, explanation="", anonymous=True):
+        self.sent.append(("quiz", question, {"anonymous": anonymous}))
+        return SendResult(ok=True, poll_id=f"poll{len(self.sent)}")
 
 
 def _learning_processor(monkeypatch):

@@ -8,13 +8,15 @@ to stay under the key's requests-per-minute limit, read from Mistral's response
 headers (free keys may allow only 2 a minute); when that limit is hit, the client waits
 for the next slot and asks the same model again instead of giving up.
 """
+import contextlib
+import contextvars
 import json
 import logging
 import os
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
@@ -35,6 +37,45 @@ PUNCTUATION = "،؛؟«»()[]\"'.,:;!?…"
 
 class LlmUnavailable(Exception):
     pass
+
+
+# --- Usage reporting -----------------------------------------------------------------
+# Every HTTP request to a provider is reported to the listeners (the app stores them for
+# the analytics), tagged with what the caller set via tagged(): bot, run and purpose.
+_tags: contextvars.ContextVar = contextvars.ContextVar("llm_tags", default={})
+usage_listeners: List[Callable[[Dict[str, Any]], None]] = []
+
+
+@contextlib.contextmanager
+def tagged(**tags):
+    token = _tags.set({**_tags.get(), **tags})
+    try:
+        yield
+    finally:
+        _tags.reset(token)
+
+
+def _report(provider: str, model: str, status: int, started: float, data: Any = None, error: str = None) -> None:
+    if not usage_listeners:
+        return
+    usage = (data or {}).get("usage") or {} if isinstance(data, dict) else {}
+    response = None
+    if isinstance(data, dict):
+        try:
+            response = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            response = None
+        if response is None and status != 200 and data:
+            response = json.dumps(data, ensure_ascii=False)[:1000]
+    call = {**_tags.get(), "provider": provider, "model": model, "status": status,
+            "prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens"),
+            "duration_ms": int((time.time() - started) * 1000),
+            "response": response if isinstance(response, str) else None, "error": error}
+    for listener in usage_listeners:
+        try:
+            listener(call)
+        except Exception:
+            logging.getLogger(__name__).exception("LLM usage listener failed")
 
 
 class MistralClient:
@@ -111,6 +152,7 @@ class MistralClient:
 
     def _post(self, model: str, messages, temperature: float, max_tokens: int):
         self._wait_for_slot()
+        started = time.time()
         try:
             resp = requests.post(
                 API_URL,
@@ -125,12 +167,14 @@ class MistralClient:
                 timeout=self.timeout,
             )
         except requests.RequestException as exc:
+            _report("mistral", model, 0, started, error=str(exc))
             raise LlmUnavailable(f"Mistral request failed: {exc}") from exc
         self._learn_limit(resp.headers)
         try:
             data = resp.json()
         except ValueError:
             data = {}
+        _report("mistral", model, resp.status_code, started, data)
         return resp.status_code, data
 
     @staticmethod
@@ -240,12 +284,21 @@ class OpenAICompatClient:
             if wait > 0:
                 time.sleep(wait)
             OpenAICompatClient._last_start[self.name] = time.time()
+        started = time.time()
         try:
-            return requests.post(self.url, headers={"Authorization": f"Bearer {self.api_key}"},
+            resp = requests.post(self.url, headers={"Authorization": f"Bearer {self.api_key}"},
                                  json=payload, timeout=self.timeout)
         except requests.RequestException as exc:
             self._rest(self.REST_AFTER_OUTAGE)
+            _report(self.name, self.model, 0, started, error=str(exc))
             raise LlmUnavailable(f"{self.name} request failed: {exc}") from exc
+        if usage_listeners:
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {}
+            _report(self.name, self.model, resp.status_code, started, data)
+        return resp
 
     def _rest(self, seconds: float) -> None:
         OpenAICompatClient._cooling_until[self.name] = max(OpenAICompatClient._cooling_until.get(self.name, 0),
@@ -352,7 +405,8 @@ class PostWriter:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         for _ in range(3):
             try:
-                out = self.client.complete_json(messages, temperature=0.2)
+                with tagged(purpose="post"):
+                    out = self.client.complete_json(messages, temperature=0.2)
             except LlmUnavailable as exc:
                 self.logger.warning("post writer unavailable: %s", exc)
                 return None
