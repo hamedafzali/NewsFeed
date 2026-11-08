@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional
 
 import database as db
 from news_platform.config import get_settings
+from news_platform.learning import speech
+from news_platform.learning.lesson import LessonWriter, format_lesson
 from news_platform.pipeline import NewsPipeline
 from news_platform.pipeline.ingestion import strip_publisher_suffix
 from news_platform.pipeline.llm import PostWriter
@@ -63,6 +65,8 @@ class NewsProcessor:
         self.pipeline = NewsPipeline(self.settings, self.store)
         self.translator = Translator()
         self.writer = PostWriter()
+        self.lessons = LessonWriter(self.writer.client)
+        self.learning = bot_config.get("mode") == "learning"
         self.max_age_hours = float(os.getenv("MAX_ARTICLE_AGE_HOURS", "36"))
         self.logger = logging.getLogger(__name__)
         self.publisher = None
@@ -82,6 +86,9 @@ class NewsProcessor:
                 sources=self._sources(),
             )
             bot_id = self._bot_id()
+            if self.learning and self.publisher and not self.lessons.enabled:
+                return NewsResult(status="error", error_message="Learning channels need MISTRAL_API_KEY",
+                                  duration=time.time() - started)
             max_posts = self._post_budget(bot_id)
             recent_summaries = self._recent_summaries(bot_id)
             candidates = self._candidates(result, self._recent_titles(bot_id))
@@ -101,7 +108,7 @@ class NewsProcessor:
                     if attempts >= max_posts * 3:
                         break
                     attempts += 1
-                    data = self._enrich_summaries(article)
+                    data = self._lesson(article) if self.learning else self._enrich_summaries(article)
                     skip_reason = "no clean post / not news" if data is None else None
                     if data is not None:
                         repeat = same_story(data["summary_en"], recent_summaries)
@@ -114,14 +121,17 @@ class NewsProcessor:
                                         summary_en=(data or {}).get("summary_en", ""), summary_fa="",
                                         posted=False, error=db.SKIPPED + skip_reason)
                         continue
-                    send = self.publisher.send_article(
-                        title=data["post_title"],
-                        summary=data["post_summary"],
-                        url=article["url"],
-                        source=article["source_name"],
-                        language=self.config.get("target_language", "fa"),
-                        image_url=article.get("image_url"),
-                    )
+                    if self.learning:
+                        send = self._send_lesson(article, data["lesson"])
+                    else:
+                        send = self.publisher.send_article(
+                            title=data["post_title"],
+                            summary=data["post_summary"],
+                            url=article["url"],
+                            source=article["source_name"],
+                            language=self.config.get("target_language", "fa"),
+                            image_url=article.get("image_url"),
+                        )
                     data["posted"] = send.ok
                     data["post_error"] = send.error
                     if bot_id is not None:
@@ -240,12 +250,7 @@ class NewsProcessor:
         base_summary = (article.get("summary") or {}).get("tldr") or title
 
         if self.writer.enabled:
-            text = article.get("text") or base_summary
-            if len(text) < MIN_TEXT_FOR_SUMMARY:
-                page_text = self.pipeline.extractor.fetch_text(article["url"])
-                if len(page_text) > len(text):
-                    text = page_text
-            written = self.writer.write(title, text, source_lang, target)
+            written = self.writer.write(title, self._article_text(article), source_lang, target)
             # No clean post (or not news): skip it. Machine translation of the
             # teaser is too unreliable for Persian to stand in for the writer.
             if not written or written.get("skip"):
@@ -279,6 +284,44 @@ class NewsProcessor:
         data["post_summary"] = summary_target or summary_en
         data["posted"] = False
         return data
+
+    def _article_text(self, article: Dict[str, Any]) -> str:
+        """The article's text; fetches the page when the feed only gave a teaser."""
+        text = article.get("text") or (article.get("summary") or {}).get("tldr") or article["title"]
+        if len(text) < MIN_TEXT_FOR_SUMMARY:
+            page_text = self.pipeline.extractor.fetch_text(article["url"])
+            if len(page_text) > len(text):
+                text = page_text
+        return text
+
+    def _lesson(self, article: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """A checked lesson for a learning channel, or None to skip the article."""
+        lesson = self.lessons.write(article["title"], self._article_text(article),
+                                    language=article.get("language") or "de",
+                                    level=self.config.get("level") or "B1",
+                                    explain_language=self.config.get("target_language", "fa"))
+        if not lesson or lesson.get("skip"):
+            return None
+        data = dict(article)
+        data.update(lesson=lesson, summary_en=lesson["summary_en"], summary_target=lesson["text"],
+                    summary_fa="", posted=False)
+        return data
+
+    def _send_lesson(self, article: Dict[str, Any], lesson: Dict[str, Any]):
+        """Lesson text, then the slow audio, then the quiz. Only the text has to go through."""
+        language = article.get("language") or "de"
+        explain = self.config.get("target_language", "fa")
+        audio = speech.synthesize(f"{lesson['title']}.\n\n{lesson['text']}", language)
+        sent = self.publisher.send_message(format_lesson(lesson, article["url"], article.get("source_name", ""),
+                                                         language, explain))
+        if not sent.ok:
+            return sent
+        if audio:
+            self.publisher.send_audio(audio.data, title=lesson["title"], performer=f"Langsam gelesen · {audio.voice}",
+                                      caption="🎧 Langsam gelesen – hören und mitlesen", duration=audio.duration)
+        for question in lesson["quiz"]:
+            self.publisher.send_quiz(question["q"], question["options"], question["answer"])
+        return sent
 
     def _source_language(self) -> Optional[str]:
         language = (self.config.get("news_language") or "").strip().lower()
@@ -393,6 +436,8 @@ def _run_bot(bot: Dict[str, Any]) -> NewsResult:
         "target_language": bot.get("target_language", "fa"),
         "max_posts_per_run": bot.get("max_posts_per_run", 2),
         "max_posts_per_day": bot.get("max_posts_per_day", 2),
+        "mode": bot.get("mode") or "news",
+        "level": bot.get("level") or "B1",
         "sources": sources,
     }
     started = time.time()

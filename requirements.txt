@@ -8,3 +8,4 @@ tenacity==8.2.3
 APScheduler==3.10.4
 gunicorn==21.2.0
 pytest==8.2.2
+edge-tts==7.3.1

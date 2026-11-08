@@ -68,6 +68,33 @@ class TelegramPublisher:
             "disable_web_page_preview": False,
         })
 
+    def send_message(self, text: str, link_preview: bool = True) -> SendResult:
+        return self._call("sendMessage", {
+            "chat_id": self.chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": not link_preview,
+        })
+
+    def send_audio(self, data: bytes, title: str, performer: str = "", caption: str = "",
+                   duration: Optional[int] = None, filename: str = "lesson.mp3") -> SendResult:
+        payload = {"chat_id": self.chat_id, "title": title[:64], "performer": performer[:64],
+                   "caption": caption[:1024], "parse_mode": "HTML"}
+        if duration:
+            payload["duration"] = str(duration)
+        return self._call("sendAudio", payload, files={"audio": (filename, data, "audio/mpeg")})
+
+    def send_quiz(self, question: str, options: list, correct: int) -> SendResult:
+        # Polls in channels are always anonymous.
+        return self._call("sendPoll", {
+            "chat_id": self.chat_id,
+            "question": question,
+            "options": [{"text": o} for o in options],
+            "type": "quiz",
+            "correct_option_id": correct,
+            "is_anonymous": True,
+        })
+
     @staticmethod
     def format_message(title: str, summary: str, url: str, source: str, language: str = "fa") -> str:
         title = html.escape((title or "").strip())
@@ -80,10 +107,13 @@ class TelegramPublisher:
         body += f'\n\n📰 <a href="{html.escape(url or "")}">{label}</a> | {source}'
         return body
 
-    def _call(self, method: str, payload: dict, retried: bool = False) -> SendResult:
+    def _call(self, method: str, payload: dict, retried: bool = False, files: Optional[dict] = None) -> SendResult:
         try:
-            resp = requests.post(f"{API_BASE}/bot{self.bot_token}/{method}",
-                                 json=payload, timeout=self.timeout)
+            url = f"{API_BASE}/bot{self.bot_token}/{method}"
+            if files:  # uploads go as multipart form data
+                resp = requests.post(url, data=payload, files=files, timeout=max(self.timeout, 60))
+            else:
+                resp = requests.post(url, json=payload, timeout=self.timeout)
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             if resp.status_code == 200 and data.get("ok"):
                 return SendResult(ok=True, message_id=data.get("result", {}).get("message_id"))
@@ -91,7 +121,7 @@ class TelegramPublisher:
                 retry_after = int(data.get("parameters", {}).get("retry_after", 3))
                 self.logger.warning("Telegram rate limit, waiting %ss", retry_after)
                 time.sleep(min(retry_after, 30))
-                return self._call(method, payload, retried=True)
+                return self._call(method, payload, retried=True, files=files)
             error = data.get("description") or f"HTTP {resp.status_code}"
             self.logger.error("Telegram %s failed: %s", method, error)
             return SendResult(ok=False, error=error)

@@ -29,6 +29,8 @@ def _migrate(c):
         "ALTER TABLE posts ADD COLUMN posted INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE posts ADD COLUMN error TEXT",
         "ALTER TABLE bots ADD COLUMN max_posts_per_day INTEGER NOT NULL DEFAULT 2",
+        "ALTER TABLE bots ADD COLUMN mode TEXT NOT NULL DEFAULT 'news'",
+        "ALTER TABLE bots ADD COLUMN level TEXT NOT NULL DEFAULT 'B1'",
     ]
     for sql in migrations:
         try:
@@ -58,6 +60,8 @@ def init_db():
                 newsapi_key TEXT,     -- unused
                 max_posts_per_run INTEGER NOT NULL DEFAULT 2,
                 max_posts_per_day INTEGER NOT NULL DEFAULT 2,  -- 0 = no daily limit
+                mode TEXT NOT NULL DEFAULT 'news',  -- news | learning
+                level TEXT NOT NULL DEFAULT 'B1',   -- CEFR level of learning lessons
                 custom_feeds TEXT,
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -110,13 +114,14 @@ def add_bot(config: Dict[str, Any]) -> int:
         cur = c.execute(
             """INSERT INTO bots
                (name, city_name, country_code, news_language, target_language, bot_token,
-                telegram_chat_id, max_posts_per_run, max_posts_per_day, custom_feeds, active)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                telegram_chat_id, max_posts_per_run, max_posts_per_day, custom_feeds, active, mode, level)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 config["name"], config["city_name"], config["country_code"],
                 config.get("news_language", "en"), config.get("target_language", "fa"),
                 config["bot_token"], config["telegram_chat_id"], config.get("max_posts_per_run", 2),
                 config.get("max_posts_per_day", 2), config.get("custom_feeds"), 1 if config.get("active", True) else 0,
+                config.get("mode") or "news", config.get("level") or "B1",
             ),
         )
         return cur.lastrowid
@@ -150,7 +155,7 @@ def get_bot(bot_id: int) -> Optional[Dict]:
 def update_bot(bot_id: int, config: Dict[str, Any]):
     fields = ["name", "city_name", "country_code", "news_language", "target_language",
               "bot_token", "telegram_chat_id", "max_posts_per_run", "max_posts_per_day",
-              "custom_feeds", "active"]
+              "custom_feeds", "active", "mode", "level"]
     updates = {k: config[k] for k in fields if k in config}
     if not updates:
         return

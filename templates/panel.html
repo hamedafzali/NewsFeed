@@ -307,6 +307,20 @@
             </select>
           </div>
           <div class="col-md-3"><label class="form-label small fw-semibold">Posts per day</label><input type="number" class="form-control" id="bot-perday" value="2" min="0" max="100" title="Spread evenly over the day. 0 = no daily limit (up to 2 per run)."></div>
+          <div class="col-md-3"><label class="form-label small fw-semibold">Mode</label>
+            <select class="form-select" id="bot-mode" title="Learning: each post is a lesson (simple text, words, grammar, slow audio, quiz) in the source language, explained in the channel language">
+              <option value="news">News</option>
+              <option value="learning">Language learning</option>
+            </select>
+          </div>
+          <div class="col-md-3"><label class="form-label small fw-semibold">Level</label>
+            <select class="form-select" id="bot-level" title="CEFR level of learning lessons">
+              <option value="A1">A1</option>
+              <option value="A2">A2</option>
+              <option value="B1">B1</option>
+              <option value="B2">B2</option>
+            </select>
+          </div>
           <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">Telegram</h6></div>
           <div class="col-md-7"><label class="form-label small fw-semibold">Bot Token *</label><input type="password" class="form-control" id="bot-token" placeholder="1234567890:ABC..."></div>
           <div class="col-md-5"><label class="form-label small fw-semibold">Chat ID *</label><input type="text" class="form-control" id="bot-chatid" placeholder="-100123456789"></div>
@@ -494,7 +508,7 @@ async function loadBots() {
             <div class="fw-semibold">${b.name}</div>
             <div class="text-muted small"><i class="bi bi-geo-alt me-1"></i>${b.city_name}, ${b.country_code}</div>
           </div>
-          <span class="badge ${b.active ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">${b.active ? 'Active' : 'Inactive'}</span>
+          <span class="badge ${b.active ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">${b.active ? 'Active' : 'Inactive'}</span>${b.mode === 'learning' ? ` <span class="badge bg-info-subtle text-info">Learning ${b.level || ''}</span>` : ''}
         </div>
         <div class="small text-muted mb-1"><i class="bi bi-telegram me-1"></i>${b.bot_token_masked || '—'}</div>
         <div class="small text-muted mb-3"><i class="bi bi-chat me-1"></i>Chat: ${b.telegram_chat_id}</div>
@@ -554,6 +568,8 @@ function openBotModal(bot = null) {
   document.getElementById('bot-lang').value = bot?.news_language || 'en';
   document.getElementById('bot-target-lang').value = bot?.target_language || 'fa';
   document.getElementById('bot-perday').value = bot ? bot.max_posts_per_day ?? 2 : 2;
+  document.getElementById('bot-mode').value = bot?.mode || 'news';
+  document.getElementById('bot-level').value = bot?.level || 'B1';
   document.getElementById('bot-token').value = '';
   document.getElementById('bot-chatid').value = bot?.telegram_chat_id || '';
   document.getElementById('bot-feeds').value = bot?.custom_feeds || '';
@@ -575,6 +591,8 @@ async function saveBot() {
     news_language: document.getElementById('bot-lang').value,
     target_language: document.getElementById('bot-target-lang').value,
     max_posts_per_day: parseInt(document.getElementById('bot-perday').value) || 0,
+    mode: document.getElementById('bot-mode').value,
+    level: document.getElementById('bot-level').value,
     telegram_chat_id: document.getElementById('bot-chatid').value,
     active: document.getElementById('bot-active').checked ? 1 : 0,
   };
