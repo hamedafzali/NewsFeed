@@ -24,12 +24,9 @@ def index():
 
 @panel.route("/bot/<int:bot_id>")
 def bot_page(bot_id):
-    from flask import make_response
-    if not db.get_bot(bot_id):
-        return make_response("Bot not found", 404)
-    r = make_response(render_template("bot.html", bot_id=bot_id))
-    r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-    return r
+    """Old address of the bot report; the report now lives inside the panel."""
+    from flask import redirect
+    return redirect(f"/panel/#/bots/{bot_id}")
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -236,16 +233,25 @@ def _public_bot(bot):
     return out
 
 
+def _channel_username(bot_id):
+    """The channel's @username (cached by the publisher), or None for private channels."""
+    bot = db.get_bot(bot_id)
+    if not bot or not bot.get("bot_token") or not bot.get("telegram_chat_id"):
+        return None
+    from news_platform.publishing.telegram import TelegramPublisher
+    try:
+        return TelegramPublisher(bot["bot_token"], str(bot["telegram_chat_id"])).chat_username()
+    except Exception:
+        return None
+
+
 @panel.route("/api/bots/<int:bot_id>/report")
 def bot_report(bot_id):
     bot = db.get_bot(bot_id)
     if not bot:
         return jsonify({"error": "Not found"}), 404
     days = min(max(int(request.args.get("days", 7)), 1), 365)
-    channel = None
-    if bot.get("bot_token") and bot.get("telegram_chat_id"):
-        from news_platform.publishing.telegram import TelegramPublisher
-        channel = TelegramPublisher(bot["bot_token"], str(bot["telegram_chat_id"])).chat_username()
+    channel = _channel_username(bot_id)
     return jsonify({"bot": _public_bot(bot), "channel": channel, "report": db.bot_report(bot_id, days),
                     "posts": db.bot_post_list(bot_id, int(request.args.get("posts", 30)))})
 
@@ -255,6 +261,27 @@ def bot_runs(bot_id):
     if not db.get_bot(bot_id):
         return jsonify({"error": "Not found"}), 404
     return jsonify(db.get_runs(bot_id, min(int(request.args.get("limit", 40)), 200)))
+
+
+@panel.route("/api/overview")
+def overview():
+    days = min(max(int(request.args.get("days", 14)), 1), 365)
+    data = db.overview(days)
+    for bot in data["bots"]:
+        bot["channel"] = _channel_username(bot["id"])
+    return jsonify(data)
+
+
+@panel.route("/api/runs")
+def all_runs():
+    bot_id = request.args.get("bot_id", type=int)
+    return jsonify(db.get_runs(bot_id, min(int(request.args.get("limit", 100)), 500)))
+
+
+@panel.route("/api/posts/recent")
+def recent_posts():
+    bot_id = request.args.get("bot_id", type=int)
+    return jsonify(db.bot_post_list(bot_id, min(int(request.args.get("limit", 100)), 500)))
 
 
 @panel.route("/api/runs/<int:run_id>")

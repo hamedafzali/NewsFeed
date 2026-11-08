@@ -4,866 +4,1052 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NewsFeed Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Vazirmatn:wght@400;500&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 <style>
-  :root { --sidebar-w: 240px; --sidebar-bg: #1a1a2e; --sidebar-active: #0f3460; }
-  body { background: #f0f2f5; min-height: 100vh; }
-  #sidebar {
-    width: var(--sidebar-w); min-height: 100vh; background: var(--sidebar-bg);
-    position: fixed; top: 0; left: 0; z-index: 100; display: flex; flex-direction: column;
+  :root {
+    --bg: #f5f6f8; --surface: #ffffff; --surface-2: #f8f9fb; --border: #e5e7eb; --border-strong: #d1d5db;
+    --text: #0f172a; --text-2: #475569; --muted: #64748b; --faint: #94a3b8;
+    --primary: #4f46e5; --primary-soft: #eef2ff;
+    --side-bg: #0f172a; --side-text: #94a3b8; --side-hover: #1e293b; --side-active: #1e293b;
+    --good: #0ca30c; --good-text: #067a06; --warn: #fab219; --warn-text: #92600a; --bad: #d03b3b; --bad-text: #b42323;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+    --grid: #eceef1; --side-w: 232px;
+    --bs-body-font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
-  #sidebar .brand { padding: 1.5rem 1.25rem; border-bottom: 1px solid #ffffff15; }
-  #sidebar .brand h5 { color: #fff; margin: 0; font-weight: 700; }
-  #sidebar .brand small { color: #a0a8c0; font-size: .75rem; }
-  #sidebar .nav-link {
-    color: #a0a8c0; padding: .65rem 1.25rem; border-radius: 8px; margin: 2px 8px;
-    display: flex; align-items: center; gap: .6rem; font-size: .875rem;
-    transition: all .15s;
-  }
-  #sidebar .nav-link:hover { color: #fff; background: rgba(255,255,255,.08); }
-  #sidebar .nav-link.active { color: #fff; background: var(--sidebar-active); }
-  #sidebar .nav-link i { font-size: 1rem; }
-  #main { margin-left: var(--sidebar-w); padding: 1.5rem; }
-  .page { display: none; }
-  .page.active { display: block; }
-  .stat-card { border: none; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.07); }
-  .stat-card .icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; }
-  .badge-relevance { font-size: .7rem; }
-  .table th { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; }
-  .empty-state { text-align: center; padding: 3rem; color: #adb5bd; }
-  .empty-state i { font-size: 3rem; display: block; margin-bottom: .75rem; }
-  .spinner-sm { width: 1rem; height: 1rem; }
-  .sentiment-positive { color: #198754; }
-  .sentiment-negative { color: #dc3545; }
-  .sentiment-neutral { color: #6c757d; }
-  .bot-card { border: none; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.07); transition: transform .15s; }
-  .bot-card:hover { transform: translateY(-2px); }
-  #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; }
-  .article-card { border: 1px solid #e9ecef; border-radius: 10px; padding: 1rem; margin-bottom: .75rem; }
-  .article-card .summary-fa { direction: rtl; font-size: .9rem; color: #495057; background: #f8f9fa; padding: .5rem .75rem; border-radius: 6px; margin-top: .5rem; }
-  @media (max-width: 768px) {
-    #sidebar { width: 60px; }
-    #sidebar .brand h5, #sidebar .brand small, #sidebar .nav-link span { display: none; }
-    #main { margin-left: 60px; }
+  body { background: var(--bg); color: var(--text); font-size: 14px; -webkit-font-smoothing: antialiased; }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .btn:hover, .nav-item-link:hover, .tabs a:hover, .crumbs a:hover { text-decoration: none; }
+  .table-tight > :not(caption) > * > * { padding-left: .7rem; padding-right: .7rem; }
+  .rtl, [dir=rtl] { font-family: 'Vazirmatn', 'Inter', sans-serif; }
+
+  /* Sidebar */
+  #sidebar { position: fixed; inset: 0 auto 0 0; width: var(--side-w); background: var(--side-bg); display: flex; flex-direction: column; z-index: 1030; }
+  #sidebar .brand { display: flex; align-items: center; gap: .65rem; padding: 1.15rem 1.1rem 1rem; color: #fff; }
+  #sidebar .brand .logo { width: 32px; height: 32px; border-radius: 8px; background: var(--primary); display: grid; place-items: center; font-size: 1rem; }
+  #sidebar .brand .name { font-weight: 600; font-size: .95rem; line-height: 1.1; }
+  #sidebar .brand small { color: var(--side-text); font-size: .72rem; }
+  #sidebar .section { color: #64748b; font-size: .68rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; padding: 1rem 1.25rem .35rem; }
+  #sidebar a.nav-item-link { display: flex; align-items: center; gap: .7rem; padding: .5rem .8rem; margin: 1px .6rem; border-radius: 7px;
+                             color: var(--side-text); text-decoration: none; font-size: .86rem; font-weight: 500; }
+  #sidebar a.nav-item-link:hover { background: var(--side-hover); color: #e2e8f0; }
+  #sidebar a.nav-item-link.active { background: var(--side-active); color: #fff; box-shadow: inset 3px 0 0 #818cf8; }
+  #sidebar a.nav-item-link i { font-size: 1rem; width: 1.1rem; text-align: center; }
+  #sidebar .bot-link { font-size: .82rem; }
+  #sidebar .bot-link .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin: 0 .3rem 0 .35rem; }
+  #sidebar .foot { margin-top: auto; padding: .9rem 1.25rem; color: #64748b; font-size: .72rem; border-top: 1px solid #1e293b; }
+
+  /* Layout */
+  #main { margin-left: var(--side-w); min-height: 100vh; }
+  .topbar { position: sticky; top: 0; z-index: 1020; background: rgba(245,246,248,.92); backdrop-filter: blur(6px);
+            border-bottom: 1px solid var(--border); padding: .8rem 1.75rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+  .crumbs { font-size: .8rem; color: var(--muted); }
+  .crumbs a { color: var(--muted); text-decoration: none; }
+  .crumbs a:hover { color: var(--text); }
+  .page-title { font-size: 1.2rem; font-weight: 650; margin: 0; letter-spacing: -.01em; }
+  .topbar .actions { margin-left: auto; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .content { padding: 1.5rem 1.75rem 3rem; max-width: 1440px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* Surfaces */
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .panel-head { display: flex; align-items: center; gap: .75rem; padding: .9rem 1.1rem; border-bottom: 1px solid var(--border); }
+  .panel-head h6 { margin: 0; font-weight: 600; font-size: .9rem; }
+  .panel-head .hint { color: var(--muted); font-size: .78rem; }
+  .panel-body { padding: 1rem 1.1rem; }
+
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: .95rem 1.1rem; height: 100%; }
+  .tile .label { color: var(--muted); font-size: .76rem; font-weight: 500; display: flex; align-items: center; gap: .4rem; }
+  .tile .value { font-size: 1.65rem; font-weight: 650; letter-spacing: -.02em; margin-top: .2rem; font-variant-numeric: tabular-nums; }
+  .tile .sub { color: var(--muted); font-size: .75rem; margin-top: .1rem; }
+  .delta-up { color: var(--good-text); } .delta-down { color: var(--bad-text); }
+
+  /* Tables */
+  .table { margin: 0; --bs-table-bg: transparent; }
+  .table > :not(caption) > * > * { padding: .65rem 1.1rem; border-color: var(--border); }
+  .table thead th { font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted);
+                    background: var(--surface-2); white-space: nowrap; border-bottom: 1px solid var(--border); }
+  .table td { vertical-align: middle; color: var(--text); }
+  .table tbody tr:last-child td { border-bottom: 0; }
+  .table-hover tbody tr.clickable { cursor: pointer; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .t-title { max-width: 460px; }
+  .t-title .ttl { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .small-muted { color: var(--muted); font-size: .78rem; }
+  .empty { text-align: center; color: var(--faint); padding: 2.5rem 1rem; }
+  .empty i { font-size: 1.8rem; display: block; margin-bottom: .4rem; }
+
+  /* Pills */
+  .pill { display: inline-flex; align-items: center; gap: .35rem; font-size: .72rem; font-weight: 600; padding: .18rem .55rem;
+          border-radius: 999px; border: 1px solid transparent; white-space: nowrap; }
+  .pill .d { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .pill-good { color: var(--good-text); background: #ecfdf3; border-color: #c6f0d4; }
+  .pill-warn { color: var(--warn-text); background: #fff8e6; border-color: #fbe3a6; }
+  .pill-bad { color: var(--bad-text); background: #fef2f2; border-color: #fbd0d0; }
+  .pill-mute { color: var(--text-2); background: #f1f5f9; border-color: #e2e8f0; }
+  .pill-info { color: #3730a3; background: var(--primary-soft); border-color: #dfe3fb; }
+  .chip { display: inline-flex; align-items: center; gap: .35rem; color: var(--text-2); font-size: .8rem; }
+  .chip i { color: var(--faint); }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: .45rem; vertical-align: 0; }
+
+  /* Buttons & forms */
+  .btn { font-weight: 500; font-size: .84rem; border-radius: 8px; }
+  .btn-sm { font-size: .8rem; padding: .3rem .7rem; }
+  .btn-primary { --bs-btn-bg: var(--primary); --bs-btn-border-color: var(--primary); --bs-btn-hover-bg: #4338ca; --bs-btn-hover-border-color: #4338ca;
+                 --bs-btn-active-bg: #3730a3; --bs-btn-disabled-bg: var(--primary); --bs-btn-disabled-border-color: var(--primary); }
+  .btn-light-b { background: var(--surface); border: 1px solid var(--border-strong); color: var(--text); }
+  .btn-light-b:hover { background: var(--surface-2); border-color: var(--border-strong); color: var(--text); }
+  .form-control, .form-select { border-radius: 8px; border-color: var(--border-strong); font-size: .86rem; }
+  .form-select-sm { font-size: .8rem; }
+  .form-label { font-size: .78rem; font-weight: 600; color: var(--text-2); margin-bottom: .3rem; }
+  .seg { display: inline-flex; background: #e9ebef; border-radius: 8px; padding: 2px; }
+  .seg button { border: 0; background: transparent; font-size: .78rem; font-weight: 500; color: var(--text-2); padding: .28rem .65rem; border-radius: 6px; }
+  .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(15,23,42,.12); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 1.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
+  .tabs a { padding: .55rem 0; color: var(--muted); text-decoration: none; font-weight: 500; font-size: .86rem; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tabs a:hover { color: var(--text); }
+  .tabs a.on { color: var(--text); border-color: var(--primary); }
+  .tabs .count { color: var(--faint); font-weight: 500; margin-left: .25rem; }
+
+  /* Bot header */
+  .bot-head { display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap; }
+  .avatar { width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 1.05rem; flex-shrink: 0; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: .4rem 1.1rem; margin-top: .35rem; }
+
+  /* Chart */
+  .chart-box { position: relative; height: 230px; }
+  .legend { display: flex; flex-wrap: wrap; gap: .35rem 1rem; font-size: .76rem; color: var(--text-2); margin-bottom: .5rem; }
+
+  /* Trace drawer */
+  #trace { --bs-offcanvas-width: min(760px, 100vw); }
+  #trace .offcanvas-header { border-bottom: 1px solid var(--border); }
+  .tl { position: relative; padding-left: 1.6rem; }
+  .tl::before { content: ""; position: absolute; left: .55rem; top: .4rem; bottom: .4rem; width: 2px; background: var(--border); }
+  .tl-item { position: relative; margin-bottom: 1rem; }
+  .tl-icon { position: absolute; left: -1.6rem; top: 0; width: 1.3rem; height: 1.3rem; border-radius: 50%; display: grid; place-items: center;
+             font-size: .7rem; background: #e2e8f0; color: var(--text-2); box-shadow: 0 0 0 3px var(--surface); }
+  .tl-item.ai .tl-icon { background: var(--primary-soft); color: var(--primary); }
+  .tl-item.ok .tl-icon { background: #dcfce7; color: var(--good-text); }
+  .tl-item.bad .tl-icon { background: #fee2e2; color: var(--bad-text); }
+  .tl-item.skip .tl-icon { background: #fef3c7; color: var(--warn-text); }
+  .tl-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+  .tl-head b { font-weight: 600; }
+  .tl-time { margin-left: auto; color: var(--faint); font-size: .72rem; font-variant-numeric: tabular-nums; }
+  .tl-body { color: var(--text-2); font-size: .84rem; margin-top: .15rem; }
+  details > summary { cursor: pointer; color: var(--primary); font-size: .78rem; font-weight: 500; margin-top: .3rem; list-style: none; }
+  details > summary::before { content: "▸ "; } details[open] > summary::before { content: "▾ "; }
+  pre.code { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: .7rem .85rem; font-size: .74rem; max-height: 440px;
+             overflow: auto; white-space: pre-wrap; word-break: break-word; margin: .4rem 0 0; }
+  .mini-table td, .mini-table th { padding: .35rem .5rem !important; font-size: .78rem; }
+
+  /* Feeds / preview */
+  .article-card { border: 1px solid var(--border); border-radius: 10px; padding: .9rem 1rem; margin-bottom: .6rem; background: var(--surface); }
+  .summary-fa { direction: rtl; font-family: 'Vazirmatn', sans-serif; font-size: .9rem; color: var(--text-2); background: var(--surface-2); padding: .5rem .75rem; border-radius: 6px; margin-top: .5rem; }
+  .quick-group { margin-bottom: .9rem; }
+  .quick-group .gl { font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: .4rem; }
+  .quick-btn { border: 1px solid var(--border-strong); background: var(--surface); border-radius: 999px; font-size: .78rem; padding: .22rem .7rem; margin: 0 .3rem .35rem 0; color: var(--text-2); }
+  .quick-btn:hover { border-color: var(--primary); color: var(--primary); }
+  .quick-btn.all i { color: var(--good); }
+
+  #toasts { position: fixed; bottom: 1.25rem; right: 1.25rem; z-index: 2000; display: flex; flex-direction: column; gap: .5rem; }
+  .toast-x { background: var(--text); color: #fff; border-radius: 10px; padding: .65rem .95rem; font-size: .84rem; box-shadow: 0 8px 24px rgba(15,23,42,.25); display: flex; gap: .55rem; align-items: center; max-width: 420px; }
+  .skeleton { color: var(--faint); padding: 2rem; text-align: center; }
+
+  @media (max-width: 900px) {
+    :root { --side-w: 64px; }
+    #sidebar .brand .name, #sidebar .brand small, #sidebar .section, #sidebar a.nav-item-link span, #sidebar .foot, #sidebar .bot-link { display: none !important; }
+    #sidebar a.nav-item-link { justify-content: center; }
+    .content, .topbar { padding-left: 1rem; padding-right: 1rem; }
   }
 </style>
 </head>
 <body>
 
-<!-- Sidebar -->
 <nav id="sidebar">
   <div class="brand">
-    <h5><i class="bi bi-newspaper me-2"></i>NewsFeed</h5>
-    <small>Management Panel</small>
+    <div class="logo"><i class="bi bi-broadcast"></i></div>
+    <div><div class="name">NewsFeed</div><small>Channel management</small></div>
   </div>
-  <ul class="nav flex-column mt-2 flex-grow-1">
-    <li class="nav-item"><a class="nav-link active" href="#" data-page="dashboard"><i class="bi bi-grid-1x2"></i><span>Dashboard</span></a></li>
-    <li class="nav-item"><a class="nav-link" href="#" data-page="bots"><i class="bi bi-robot"></i><span>News Bots</span></a></li>
-    <li class="nav-item"><a class="nav-link" href="#" data-page="activity"><i class="bi bi-activity"></i><span>Activity Log</span></a></li>
-    <li class="nav-item"><a class="nav-link" href="#" data-page="posts"><i class="bi bi-send-check"></i><span>Posted Articles</span></a></li>
-    <li class="nav-item"><a class="nav-link" href="#" data-page="preview"><i class="bi bi-search"></i><span>News Preview</span></a></li>
-    <li class="nav-item mt-auto"><a class="nav-link" href="#" data-page="settings"><i class="bi bi-gear"></i><span>Settings</span></a></li>
-  </ul>
+  <div class="section">Monitor</div>
+  <a class="nav-item-link" href="#/overview" data-nav="overview"><i class="bi bi-speedometer2"></i><span>Overview</span></a>
+  <a class="nav-item-link" href="#/runs" data-nav="runs"><i class="bi bi-diagram-3"></i><span>Runs &amp; traces</span></a>
+  <a class="nav-item-link" href="#/posts" data-nav="posts"><i class="bi bi-send"></i><span>Posts</span></a>
+  <div class="section">Channels</div>
+  <a class="nav-item-link" href="#/bots" data-nav="bots"><i class="bi bi-collection"></i><span>All bots</span></a>
+  <div id="side-bots"></div>
+  <div class="section">Tools</div>
+  <a class="nav-item-link" href="#/preview" data-nav="preview"><i class="bi bi-search"></i><span>News preview</span></a>
+  <a class="nav-item-link" href="#/settings" data-nav="settings"><i class="bi bi-sliders"></i><span>Feeds &amp; settings</span></a>
+  <div class="foot">Times in Berlin time · no user data stored</div>
 </nav>
 
-<!-- Main -->
 <main id="main">
-
-  <!-- Dashboard -->
-  <div class="page active" id="page-dashboard">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h4 class="fw-bold mb-0">Dashboard</h4>
-      <button class="btn btn-sm btn-outline-secondary" onclick="loadDashboard()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+  <div class="topbar">
+    <div>
+      <div class="crumbs" id="crumbs"></div>
+      <h1 class="page-title" id="title">Overview</h1>
     </div>
-    <div class="row g-3 mb-4" id="stat-cards">
-      <div class="col-6 col-lg-3"><div class="card stat-card p-3"><div class="d-flex align-items-center gap-3"><div class="icon bg-primary bg-opacity-10 text-primary"><i class="bi bi-robot"></i></div><div><div class="text-muted small">Active Bots</div><div class="fs-4 fw-bold" id="stat-bots">—</div></div></div></div></div>
-      <div class="col-6 col-lg-3"><div class="card stat-card p-3"><div class="d-flex align-items-center gap-3"><div class="icon bg-info bg-opacity-10 text-info"><i class="bi bi-cloud-download"></i></div><div><div class="text-muted small">Fetched Today</div><div class="fs-4 fw-bold" id="stat-fetched">—</div></div></div></div></div>
-      <div class="col-6 col-lg-3"><div class="card stat-card p-3"><div class="d-flex align-items-center gap-3"><div class="icon bg-success bg-opacity-10 text-success"><i class="bi bi-check2-circle"></i></div><div><div class="text-muted small">Returned Today</div><div class="fs-4 fw-bold" id="stat-returned">—</div></div></div></div></div>
-      <div class="col-6 col-lg-3"><div class="card stat-card p-3"><div class="d-flex align-items-center gap-3"><div class="icon bg-warning bg-opacity-10 text-warning"><i class="bi bi-send-check"></i></div><div><div class="text-muted small">Total Posts</div><div class="fs-4 fw-bold" id="stat-posts">—</div></div></div></div></div>
-    </div>
-    <div class="row g-3 mb-4">
-      <div class="col-12 col-lg-8">
-        <div class="card stat-card p-3">
-          <div class="fw-semibold mb-3">Activity (last 7 days)</div>
-          <canvas id="activity-chart" height="100"></canvas>
-        </div>
-      </div>
-      <div class="col-12 col-lg-4">
-        <div class="card stat-card p-3 h-100">
-          <div class="fw-semibold mb-3">Today's Summary</div>
-          <div id="today-summary" class="text-muted small">Loading...</div>
-        </div>
-      </div>
-    </div>
-    <div class="card stat-card">
-      <div class="card-header bg-white fw-semibold border-0 pt-3">Recent Activity</div>
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-hover mb-0">
-            <thead><tr><th>Time</th><th>City</th><th>Source</th><th>Fetched</th><th>Returned</th><th>Duration</th><th>Status</th></tr></thead>
-            <tbody id="recent-activity"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+    <div class="actions" id="actions"></div>
   </div>
 
-  <!-- Bots -->
-  <div class="page" id="page-bots">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h4 class="fw-bold mb-0">News Bots</h4>
-      <button class="btn btn-primary btn-sm" onclick="openBotModal()"><i class="bi bi-plus-lg me-1"></i>Add Bot</button>
-    </div>
-    <div class="row g-3" id="bots-grid">
-      <div class="col-12 text-center py-5 text-muted"><div class="spinner-border spinner-sm"></div> Loading...</div>
-    </div>
-  </div>
-
-  <!-- Activity -->
-  <div class="page" id="page-activity">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h4 class="fw-bold mb-0">Activity Log</h4>
-      <button class="btn btn-sm btn-outline-secondary" onclick="loadActivity()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
-    </div>
-    <div class="card stat-card">
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-hover mb-0">
-            <thead><tr><th>Time</th><th>City</th><th>Source</th><th>Fetched</th><th>Returned</th><th>Duration</th><th>Error</th></tr></thead>
-            <tbody id="activity-table"></tbody>
-          </table>
-        </div>
+  <div class="content">
+    <!-- Overview -->
+    <section class="view" id="view-overview">
+      <div class="row g-3 mb-3" id="ov-tiles"></div>
+      <div class="panel mb-3">
+        <div class="panel-head"><h6>Bots</h6><span class="hint">click a bot for its full report</span></div>
+        <div class="table-responsive"><table class="table table-hover">
+          <thead><tr><th>Bot</th><th>Status</th><th class="num">Subscribers</th><th class="num">Posts 24h</th><th>Last post</th><th>Last run</th><th class="num" id="ov-opens-h">Üben taps</th></tr></thead>
+          <tbody id="ov-bots"></tbody>
+        </table></div>
       </div>
-    </div>
-  </div>
-
-  <!-- Posts -->
-  <div class="page" id="page-posts">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h4 class="fw-bold mb-0">Posted Articles</h4>
-      <button class="btn btn-sm btn-outline-secondary" onclick="loadPosts()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
-    </div>
-    <div id="posts-list">
-      <div class="text-center py-5 text-muted"><div class="spinner-border spinner-sm"></div> Loading...</div>
-    </div>
-  </div>
-
-  <!-- Preview -->
-  <div class="page" id="page-preview">
-    <h4 class="fw-bold mb-4">News Preview</h4>
-    <div class="card stat-card p-4 mb-4">
+      <div class="row g-3 mb-3">
+        <div class="col-xl-6"><div class="panel h-100"><div class="panel-head"><h6>Posts per day</h6><span class="hint" id="ov-posts-hint"></span></div>
+          <div class="panel-body"><div class="legend" id="lg-ov-posts"></div><div class="chart-box"><canvas id="ch-ov-posts"></canvas></div></div></div></div>
+        <div class="col-xl-6"><div class="panel h-100"><div class="panel-head"><h6>AI requests per day</h6><span class="hint">by provider</span></div>
+          <div class="panel-body"><div class="legend" id="lg-ov-ai"></div><div class="chart-box"><canvas id="ch-ov-ai"></canvas></div></div></div></div>
+      </div>
       <div class="row g-3">
-        <div class="col-md-3"><label class="form-label small fw-semibold">City</label><input type="text" class="form-control" id="prev-city" placeholder="Tübingen" value="Tübingen"></div>
-        <div class="col-md-2"><label class="form-label small fw-semibold">Country Code</label><input type="text" class="form-control" id="prev-country" placeholder="DE" value="DE" maxlength="2"></div>
-        <div class="col-md-2"><label class="form-label small fw-semibold">Language</label><input type="text" class="form-control" id="prev-lang" placeholder="de" value="de" maxlength="5"></div>
-        <div class="col-md-2"><label class="form-label small fw-semibold">Max Results</label><input type="number" class="form-control" id="prev-max" value="5" min="1" max="20"></div>
+        <div class="col-xl-8"><div class="panel h-100">
+          <div class="panel-head"><h6>Latest runs</h6><a class="ms-auto small" href="#/runs">All runs →</a></div>
+          <div class="table-responsive"><table class="table table-hover">
+            <thead><tr><th>Started</th><th>Bot</th><th>Result</th><th class="num">AI</th><th class="num">Duration</th></tr></thead>
+            <tbody id="ov-runs"></tbody>
+          </table></div>
+        </div></div>
+        <div class="col-xl-4"><div class="panel h-100">
+          <div class="panel-head"><h6>AI providers</h6><span class="hint" id="ov-prov-hint"></span></div>
+          <div class="table-responsive"><table class="table table-tight">
+            <thead><tr><th>Provider</th><th class="num">Requests</th><th class="num">Answered</th><th class="num">Avg</th></tr></thead>
+            <tbody id="ov-providers"></tbody>
+          </table></div>
+        </div></div>
       </div>
-      <div class="mt-3">
-        <button class="btn btn-primary" id="preview-btn" onclick="runPreview()"><i class="bi bi-search me-1"></i>Fetch News</button>
-      </div>
-    </div>
+    </section>
 
-    <div id="preview-progress" class="d-none mb-3">
-      <div class="card stat-card p-3">
+    <!-- Bots list -->
+    <section class="view" id="view-bots">
+      <div class="panel">
+        <div class="table-responsive"><table class="table table-hover">
+          <thead><tr><th>Bot</th><th>Channel</th><th>Type</th><th>Schedule</th><th class="num">Subscribers</th><th>Status</th><th></th></tr></thead>
+          <tbody id="bots-table"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- Bot detail -->
+    <section class="view" id="view-bot">
+      <div class="panel panel-body mb-3" id="bot-header"></div>
+      <div class="tabs" id="bot-tabs">
+        <a href="#" data-tab="report">Report</a>
+        <a href="#" data-tab="posts">Posts</a>
+        <a href="#" data-tab="runs">Runs &amp; traces</a>
+        <a href="#" data-tab="ai">AI usage</a>
+        <a href="#" data-tab="config">Configuration</a>
+      </div>
+      <div id="bot-tab-report" class="bot-tab">
+        <div class="row g-3 mb-3" id="bot-tiles"></div>
+        <div class="row g-3">
+          <div class="col-xl-4"><div class="panel h-100"><div class="panel-head"><h6>Subscribers</h6><span class="hint">counted daily</span></div>
+            <div class="panel-body"><div class="chart-box"><canvas id="ch-bot-subs"></canvas></div></div></div></div>
+          <div class="col-xl-4"><div class="panel h-100"><div class="panel-head"><h6>Articles per day</h6></div>
+            <div class="panel-body"><div class="legend" id="lg-bot-posts"></div><div class="chart-box"><canvas id="ch-bot-posts"></canvas></div></div></div></div>
+          <div class="col-xl-4"><div class="panel h-100"><div class="panel-head"><h6>AI requests per day</h6></div>
+            <div class="panel-body"><div class="legend" id="lg-bot-ai"></div><div class="chart-box"><canvas id="ch-bot-ai"></canvas></div></div></div></div>
+        </div>
+      </div>
+      <div id="bot-tab-posts" class="bot-tab"><div class="panel"><div class="table-responsive"><table class="table table-hover">
+        <thead id="bot-posts-head"></thead><tbody id="bot-posts"></tbody></table></div></div></div>
+      <div id="bot-tab-runs" class="bot-tab">
+        <div class="small-muted mb-2">Every run of this bot. Open one to see each step: what was fetched, which article was chosen, what the AI answered, and what was posted.</div>
+        <div class="panel"><div class="table-responsive"><table class="table table-hover">
+          <thead><tr><th>Started</th><th>Trigger</th><th>Result</th><th class="num">Fetched</th><th class="num">Posted</th><th class="num">AI calls</th><th class="num">Duration</th><th>Error</th></tr></thead>
+          <tbody id="bot-runs"></tbody></table></div></div>
+      </div>
+      <div id="bot-tab-ai" class="bot-tab"><div class="panel"><div class="table-responsive"><table class="table">
+        <thead><tr><th>Provider</th><th>Model</th><th>Purpose</th><th class="num">Requests</th><th class="num">Answered</th><th class="num">Avg time</th><th class="num">Tokens in</th><th class="num">Tokens out</th></tr></thead>
+        <tbody id="bot-models"></tbody></table></div></div></div>
+      <div id="bot-tab-config" class="bot-tab"><div class="panel"><div class="panel-head"><h6>Configuration</h6>
+        <button class="btn btn-sm btn-light-b ms-auto" onclick="editBot(state.botId)"><i class="bi bi-pencil me-1"></i>Edit</button></div>
+        <div class="panel-body"><div class="row g-3" id="bot-config"></div></div></div></div>
+    </section>
+
+    <!-- Runs -->
+    <section class="view" id="view-runs">
+      <div class="small-muted mb-2">Each run is one check of a bot: fetch the feeds, pick an article, ask the AI, post. Open a run to see every step.</div>
+      <div class="panel"><div class="table-responsive"><table class="table table-hover">
+        <thead><tr><th>Started</th><th>Bot</th><th>Trigger</th><th>Result</th><th class="num">Fetched</th><th class="num">Posted</th><th class="num">AI calls</th><th class="num">Duration</th><th>Error</th></tr></thead>
+        <tbody id="runs-table"></tbody></table></div></div>
+    </section>
+
+    <!-- Posts -->
+    <section class="view" id="view-posts">
+      <div class="panel"><div class="table-responsive"><table class="table table-hover">
+        <thead><tr><th>Time</th><th>Bot</th><th>Article</th><th>Result</th><th class="num">Üben</th><th class="num">Reactions</th><th></th></tr></thead>
+        <tbody id="posts-table"></tbody></table></div></div>
+    </section>
+
+    <!-- Preview -->
+    <section class="view" id="view-preview">
+      <div class="panel panel-body mb-3">
+        <div class="small-muted mb-3">Fetch and rank news for a place without posting anything.</div>
+        <div class="row g-3 align-items-end">
+          <div class="col-md-3"><label class="form-label">City</label><input type="text" class="form-control" id="prev-city" value="Tübingen"></div>
+          <div class="col-md-2"><label class="form-label">Country code</label><input type="text" class="form-control" id="prev-country" value="DE" maxlength="2"></div>
+          <div class="col-md-2"><label class="form-label">Language</label><input type="text" class="form-control" id="prev-lang" value="de" maxlength="5"></div>
+          <div class="col-md-2"><label class="form-label">Max results</label><input type="number" class="form-control" id="prev-max" value="5" min="1" max="20"></div>
+          <div class="col-md-3"><button class="btn btn-primary w-100" id="preview-btn" onclick="runPreview()"><i class="bi bi-search me-1"></i>Fetch news</button></div>
+        </div>
+      </div>
+      <div id="preview-progress" class="d-none mb-3"><div class="panel panel-body">
         <div class="d-flex align-items-center gap-3">
-          <div class="spinner-border text-primary spinner-sm flex-shrink-0"></div>
-          <div class="flex-grow-1">
-            <div class="fw-semibold" id="progress-step">Fetching RSS feeds…</div>
-            <div class="text-muted small" id="progress-detail">Connecting to sources</div>
-          </div>
-          <div class="text-muted font-monospace" id="progress-timer">0s</div>
+          <div class="spinner-border spinner-border-sm text-primary"></div>
+          <div class="flex-grow-1"><div class="fw-semibold" id="progress-step">Fetching RSS feeds…</div><div class="small-muted" id="progress-detail"></div></div>
+          <div class="small-muted font-monospace" id="progress-timer">0s</div>
         </div>
-        <div class="progress mt-2" style="height:4px">
-          <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" id="progress-bar" style="width:5%"></div>
-        </div>
-      </div>
-    </div>
+        <div class="progress mt-2" style="height:4px"><div class="progress-bar bg-primary" id="progress-bar" style="width:5%"></div></div>
+      </div></div>
+      <div id="preview-results"></div>
+    </section>
 
-    <div id="preview-results"></div>
+    <!-- Settings -->
+    <section class="view" id="view-settings">
+      <div class="panel mb-3">
+        <div class="panel-head"><div><h6>Global RSS feeds</h6><div class="hint">Fetched for every bot, in addition to a bot's own feeds</div></div>
+          <button class="btn btn-sm btn-primary ms-auto" onclick="openFeedModal()"><i class="bi bi-plus-lg me-1"></i>Add feed</button></div>
+        <div class="table-responsive"><table class="table table-hover">
+          <thead><tr><th>Name</th><th>URL</th><th>Active</th><th>All articles</th><th></th></tr></thead>
+          <tbody id="feeds-table"></tbody></table></div>
+      </div>
+      <div class="panel mb-3">
+        <div class="panel-head"><div><h6>Add a popular source</h6><div class="hint"><i class="bi bi-check2-all text-success"></i> = every article is used; others are filtered by relevance to the bot's city</div></div></div>
+        <div class="panel-body" id="quick-add"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h6>Server configuration</h6><span class="hint">read-only, set in the deployment</span></div>
+        <div class="panel-body"><div class="row g-3" id="settings-list"></div></div>
+      </div>
+    </section>
   </div>
-
-  <!-- Settings -->
-  <div class="page" id="page-settings">
-    <h4 class="fw-bold mb-4">Settings</h4>
-
-    <!-- Global RSS Feeds -->
-    <div class="card stat-card mb-4">
-      <div class="card-header bg-white border-0 pt-3 d-flex justify-content-between align-items-center">
-        <div>
-          <div class="fw-semibold">Global RSS Feeds</div>
-          <div class="text-muted small">Added to every news fetch automatically</div>
-        </div>
-        <button class="btn btn-primary btn-sm" onclick="openFeedModal()"><i class="bi bi-plus-lg me-1"></i>Add Feed</button>
-      </div>
-      <div class="card-body p-0">
-        <table class="table table-hover mb-0">
-          <thead><tr><th>Name</th><th>URL</th><th>Active</th><th>Skip Relevance Filter</th><th></th></tr></thead>
-          <tbody id="feeds-table"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Quick-add popular feeds -->
-    <div class="card stat-card mb-4 p-3">
-      <div class="fw-semibold mb-3">Quick Add — Popular Sources</div>
-      <div class="mb-3 mt-1">
-        <span class="badge bg-success-subtle text-success me-1">Green = Skip Relevance ON</span>
-        <span class="badge bg-secondary-subtle text-secondary me-1">Grey = Relevance filter ON</span>
-      </div>
-
-      <div class="fw-semibold small text-muted text-uppercase mb-2">Tübingen (Official)</div>
-      <div class="row g-2 mb-3">
-        <div class="col-auto"><button class="btn btn-sm btn-primary" onclick="quickAdd('Tübingen Pressemitteilungen','https://www.tuebingen.de/pressemitteilungen.xml',1)">+ Pressemitteilungen</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-primary" onclick="quickAdd('Tübingen Nachrichten','https://www.tuebingen.de/news.xml',1)">+ Stadt Nachrichten</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-primary" onclick="quickAdd('Tübingen Bekanntmachungen','https://www.tuebingen.de/amtliche_bekanntmachungen.xml',1)">+ Amtl. Bekanntmachungen</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Tagblatt Tübingen','https://www.tagblatt.de/rss/feed/',0)">+ Tagblatt Tübingen</button></div>
-      </div>
-
-      <div class="fw-semibold small text-muted text-uppercase mb-2">German</div>
-      <div class="row g-2 mb-3">
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Google News','https://news.google.com/rss/search?q={city}&hl={language}&gl={country}',0)">+ Google News</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success btn-sm" style="opacity:.8" onclick="quickAdd('Tagesschau','https://www.tagesschau.de/xml/rss2',1)">+ Tagesschau</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Süddeutsche Zeitung','https://rss.sueddeutsche.de/rss/Alles',1)">+ Süddeutsche Zeitung</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('SPIEGEL Online','https://www.spiegel.de/schlagzeilen/index.rss',1)">+ SPIEGEL</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('ZEIT Online','https://newsfeed.zeit.de/all',1)">+ ZEIT Online</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('FAZ','https://www.faz.net/rss/aktuell/',1)">+ FAZ</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('n-tv','https://www.n-tv.de/rss',1)">+ n-tv</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Focus Online','https://rss.focus.de/fol/XML/rss_folnews.xml',1)">+ Focus Online</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('WELT','https://www.welt.de/feeds/latest.rss',1)">+ WELT</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('stern.de','https://www.stern.de/feed/standard/all/',1)">+ stern.de</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Handelsblatt','https://www.handelsblatt.com/rss09/schlagzeilen.rss',1)">+ Handelsblatt</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('DW Deutsch','https://rss.dw.com/rdf/rss-de-all',1)">+ DW Deutsch</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Deutschlandfunk','https://www.deutschlandfunk.de/die-nachrichten.353.de.rss',1)">+ Deutschlandfunk</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('SWR BW','https://www.swr.de/swrde/nachrichten/bw/rss/feed-bw-nachrichten.xml',1)">+ SWR BW</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" onclick="quickAdd('Tagblatt Tübingen','https://www.tagblatt.de/rss/feed/',0)">+ Tagblatt Tübingen</button></div>
-      </div>
-
-      <div class="fw-semibold small text-muted text-uppercase mb-2">International (English)</div>
-      <div class="row g-2 mb-3">
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('DW English','https://rss.dw.com/rdf/rss-en-all',1)">+ DW English</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('BBC World','https://feeds.bbci.co.uk/news/world/rss.xml',1)">+ BBC World</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Reuters','https://feeds.reuters.com/reuters/topNews',1)">+ Reuters</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Al Jazeera','https://www.aljazeera.com/xml/rss/all.xml',1)">+ Al Jazeera</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Guardian World','https://www.theguardian.com/world/rss',1)">+ Guardian</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('NPR News','https://feeds.npr.org/1001/rss.xml',1)">+ NPR</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Associated Press','https://feeds.ap.org/rss/apf-topnews',1)">+ AP</button></div>
-      </div>
-
-      <div class="fw-semibold small text-muted text-uppercase mb-2">Tech</div>
-      <div class="row g-2 mb-3">
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('heise Online','https://www.heise.de/rss/heise-atom.xml',1)">+ heise Online</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Golem.de','https://rss.golem.de/rss.php?feed=RSS2.0',1)">+ Golem.de</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('TechCrunch','https://techcrunch.com/feed/',1)">+ TechCrunch</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('The Verge','https://www.theverge.com/rss/index.xml',1)">+ The Verge</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Ars Technica','https://feeds.arstechnica.com/arstechnica/index',1)">+ Ars Technica</button></div>
-      </div>
-
-      <div class="fw-semibold small text-muted text-uppercase mb-2">Business & Finance</div>
-      <div class="row g-2">
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Wirtschaftswoche','https://www.wiwo.de/rss/politik-und-wirtschaft',1)">+ WirtschaftsWoche</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Financial Times','https://www.ft.com/rss/home/uk',1)">+ Financial Times</button></div>
-        <div class="col-auto"><button class="btn btn-sm btn-success" style="opacity:.8" onclick="quickAdd('Bloomberg','https://feeds.bloomberg.com/markets/news.rss',1)">+ Bloomberg</button></div>
-      </div>
-    </div>
-
-    <!-- Server config -->
-    <div class="card stat-card p-4">
-      <h6 class="text-muted text-uppercase small fw-bold mb-3">Server Configuration</h6>
-      <div id="settings-list" class="row g-3"></div>
-    </div>
-  </div>
-
 </main>
 
-<!-- Bot Modal -->
+<!-- Run trace drawer -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="trace">
+  <div class="offcanvas-header">
+    <div><div class="crumbs" id="trace-sub"></div><h5 class="offcanvas-title fw-semibold" id="trace-title">Run</h5></div>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body" id="trace-body"></div>
+</div>
+
+<!-- Bot modal -->
 <div class="modal fade" id="bot-modal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header border-0">
-        <h5 class="modal-title fw-bold" id="bot-modal-title">Add Bot</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <input type="hidden" id="bot-id">
-        <div class="row g-3">
-          <div class="col-md-6"><label class="form-label small fw-semibold">Bot Name *</label><input type="text" class="form-control" id="bot-name" placeholder="Tehran News Bot"></div>
-          <div class="col-md-6"><label class="form-label small fw-semibold">City Name *</label><input type="text" class="form-control" id="bot-city" placeholder="Tehran"></div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Country Code *</label><input type="text" class="form-control" id="bot-country" placeholder="DE" maxlength="2"></div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Source Language</label>
-            <select class="form-select" id="bot-lang" title="Only articles written in this language are posted">
-              <option value="any">Any language</option>
-              <option value="en">English</option>
-              <option value="de">German</option>
-              <option value="fa">Persian</option>
-            </select>
-          </div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Channel Language</label>
-            <select class="form-select" id="bot-target-lang">
-              <option value="fa">Persian (فارسی)</option>
-              <option value="en">English</option>
-              <option value="de">German</option>
-            </select>
-          </div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Posts per day</label><input type="number" class="form-control" id="bot-perday" value="2" min="0" max="100" title="Spread evenly over the day. 0 = no daily limit (up to 2 per run)."></div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Post from (hour)</label><input type="number" class="form-control" id="bot-from" value="8" min="0" max="23" title="Berlin time. No posts (and no AI requests) outside these hours."></div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Post until (hour)</label><input type="number" class="form-control" id="bot-until" value="20" min="1" max="24" title="Berlin time. 8 to 20 = posts between 08:00 and 20:00. Same value in both = any time."></div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Run every (minutes)</label><input type="number" class="form-control" id="bot-every" value="60" min="5" max="1440" title="How often this bot checks the feeds. Posts per day still spaces the posts out."></div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Mode</label>
-            <select class="form-select" id="bot-mode" title="Learning: each post is a lesson (simple text, words, grammar, slow audio, quiz) in the source language, explained in the channel language">
-              <option value="news">News</option>
-              <option value="learning">Language learning</option>
-            </select>
-          </div>
-          <div class="col-md-3"><label class="form-label small fw-semibold">Level</label>
-            <select class="form-select" id="bot-level" title="CEFR level of learning lessons">
-              <option value="A1">A1</option>
-              <option value="A2">A2</option>
-              <option value="B1">B1</option>
-              <option value="B2">B2</option>
-            </select>
-          </div>
-          <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">Telegram</h6></div>
-          <div class="col-md-7"><label class="form-label small fw-semibold">Bot Token *</label><input type="password" class="form-control" id="bot-token" placeholder="1234567890:ABC..."></div>
-          <div class="col-md-5"><label class="form-label small fw-semibold">Chat ID *</label><input type="text" class="form-control" id="bot-chatid" placeholder="-100123456789"></div>
-          <div class="col-12"><hr class="my-1"><h6 class="text-muted small fw-bold text-uppercase">Custom RSS Feeds (optional)</h6></div>
-          <div class="col-12">
-            <label class="form-label small fw-semibold">RSS Feed URLs</label>
-            <textarea class="form-control font-monospace" id="bot-feeds" rows="4" placeholder="One URL per line, e.g.:&#10;https://rss.dw.com/rdf/rss-en-all&#10;https://feeds.bbci.co.uk/news/rss.xml&#10;https://www.tagblatt.de/rss/feed/"></textarea>
-            <div class="form-text">One RSS/Atom URL per line. These are fetched in addition to the global feeds.</div>
-          </div>
-          <div class="col-12 d-flex align-items-center gap-2">
-            <div class="form-check form-switch">
-              <input class="form-check-input" type="checkbox" id="bot-active" checked>
-              <label class="form-check-label small" for="bot-active">Active</label>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer border-0">
-        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary" onclick="saveBot()"><i class="bi bi-check-lg me-1"></i>Save Bot</button>
+  <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title fw-semibold" id="bot-modal-title">Add bot</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <input type="hidden" id="bot-id">
+      <div class="row g-3">
+        <div class="col-md-6"><label class="form-label">Bot name *</label><input type="text" class="form-control" id="bot-name" placeholder="Tehran News"></div>
+        <div class="col-md-4"><label class="form-label">City *</label><input type="text" class="form-control" id="bot-city" placeholder="Tehran"></div>
+        <div class="col-md-2"><label class="form-label">Country *</label><input type="text" class="form-control" id="bot-country" placeholder="DE" maxlength="2"></div>
+        <div class="col-md-3"><label class="form-label">Mode</label>
+          <select class="form-select" id="bot-mode" title="Learning: each post is a lesson in the source language, explained in the channel language">
+            <option value="news">News</option><option value="learning">Language learning</option></select></div>
+        <div class="col-md-3"><label class="form-label">Level</label>
+          <select class="form-select" id="bot-level"><option>A1</option><option>A2</option><option>B1</option><option>B2</option></select></div>
+        <div class="col-md-3"><label class="form-label">Source language</label>
+          <select class="form-select" id="bot-lang" title="Only articles in this language are used">
+            <option value="any">Any</option><option value="en">English</option><option value="de">German</option><option value="fa">Persian</option></select></div>
+        <div class="col-md-3"><label class="form-label">Channel language</label>
+          <select class="form-select" id="bot-target-lang"><option value="fa">Persian</option><option value="en">English</option><option value="de">German</option></select></div>
+        <div class="col-12"><div class="small fw-semibold text-uppercase small-muted mt-2">Schedule</div></div>
+        <div class="col-md-3"><label class="form-label">Posts per day</label><input type="number" class="form-control" id="bot-perday" value="2" min="0" max="100" title="Spread over the posting hours. 0 = no daily limit."></div>
+        <div class="col-md-3"><label class="form-label">Post from (hour)</label><input type="number" class="form-control" id="bot-from" value="8" min="0" max="23" title="Berlin time"></div>
+        <div class="col-md-3"><label class="form-label">Post until (hour)</label><input type="number" class="form-control" id="bot-until" value="20" min="1" max="24" title="Berlin time. Same value in both = any time."></div>
+        <div class="col-md-3"><label class="form-label">Check every (min)</label><input type="number" class="form-control" id="bot-every" value="60" min="5" max="1440"></div>
+        <div class="col-12"><div class="small fw-semibold text-uppercase small-muted mt-2">Telegram</div></div>
+        <div class="col-md-7"><label class="form-label">Bot token *</label><input type="password" class="form-control" id="bot-token" placeholder="Leave empty to keep the current token" autocomplete="off"></div>
+        <div class="col-md-5"><label class="form-label">Chat ID *</label><input type="text" class="form-control" id="bot-chatid" placeholder="-100123456789"></div>
+        <div class="col-12"><label class="form-label">Extra RSS feeds (optional)</label>
+          <textarea class="form-control font-monospace" id="bot-feeds" rows="3" placeholder="One URL per line"></textarea>
+          <div class="form-text">Fetched in addition to the global feeds.</div></div>
+        <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="bot-active" checked>
+          <label class="form-check-label" for="bot-active">Active (posts on schedule)</label></div></div>
       </div>
     </div>
-  </div>
-</div>
-
-<!-- Posts Modal -->
-<div class="modal fade" id="posts-modal" tabindex="-1">
-  <div class="modal-dialog modal-xl">
-    <div class="modal-content">
-      <div class="modal-header border-0">
-        <h5 class="modal-title fw-bold" id="posts-modal-title">Posting History</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body" id="posts-modal-body">Loading...</div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-light-b" data-bs-dismiss="modal">Cancel</button>
+      <button type="button" class="btn btn-primary" onclick="saveBot()"><i class="bi bi-check-lg me-1"></i>Save</button>
     </div>
-  </div>
+  </div></div>
 </div>
 
-<!-- Feed Modal -->
+<!-- Feed modal -->
 <div class="modal fade" id="feed-modal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header border-0">
-        <h5 class="modal-title fw-bold">Add RSS Feed</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <input type="hidden" id="feed-id">
-        <div class="mb-3"><label class="form-label small fw-semibold">Feed Name *</label><input type="text" class="form-control" id="feed-name" placeholder="BBC World News"></div>
-        <div class="mb-3"><label class="form-label small fw-semibold">RSS URL *</label><input type="url" class="form-control font-monospace" id="feed-url" placeholder="https://feeds.bbci.co.uk/news/world/rss.xml"></div>
-        <div class="form-check form-switch">
-          <input class="form-check-input" type="checkbox" id="feed-bypass">
-          <label class="form-check-label small" for="feed-bypass">Skip relevance filter <span class="text-muted">(include all articles regardless of city match)</span></label>
-        </div>
-      </div>
-      <div class="modal-footer border-0">
-        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary" onclick="saveFeed()"><i class="bi bi-check-lg me-1"></i>Save</button>
-      </div>
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title fw-semibold">RSS feed</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <input type="hidden" id="feed-id">
+      <div class="mb-3"><label class="form-label">Name</label><input type="text" class="form-control" id="feed-name" placeholder="BBC World"></div>
+      <div class="mb-3"><label class="form-label">URL *</label><input type="url" class="form-control font-monospace" id="feed-url" placeholder="https://…"></div>
+      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="feed-bypass">
+        <label class="form-check-label" for="feed-bypass">Use every article <span class="small-muted">(skip the city relevance filter)</span></label></div>
     </div>
-  </div>
+    <div class="modal-footer"><button type="button" class="btn btn-light-b" data-bs-dismiss="modal">Cancel</button>
+      <button type="button" class="btn btn-primary" onclick="saveFeed()">Save</button></div>
+  </div></div>
 </div>
 
-<!-- Toast -->
-<div id="toast-container"></div>
+<div id="toasts"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// ── Navigation ────────────────────────────────────────────────────────────────
-let activityChart = null;
-
-document.querySelectorAll('[data-page]').forEach(link => {
-  link.addEventListener('click', e => {
-    e.preventDefault();
-    const page = link.dataset.page;
-    document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-    link.classList.add('active');
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.getElementById('page-' + page).classList.add('active');
-    if (page === 'dashboard') loadDashboard();
-    else if (page === 'bots') loadBots();
-    else if (page === 'activity') loadActivity();
-    else if (page === 'posts') loadPosts();
-    else if (page === 'settings') { loadSettings(); loadFeeds(); }
-  });
-});
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const api = (url, opts) => fetch(url, opts).then(r => r.json());
+const jsonOpts = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = n => (n ?? 0).toLocaleString('en-US');
+const hasRtl = s => /[؀-ۿ]/.test(s || '');
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const SERIES = ['--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7', '--s8'];
+const PROVIDER_SLOT = { gemini: 0, groq: 1, mistral: 2 };
+const STATUS = { sent: '--good', skipped: '--warn', failed: '--bad' };
 
-function toast(msg, type = 'success') {
-  const id = 'toast-' + Date.now();
-  const icon = type === 'success' ? 'check-circle-fill' : 'exclamation-triangle-fill';
-  const color = type === 'success' ? 'text-success' : 'text-danger';
-  document.getElementById('toast-container').insertAdjacentHTML('beforeend', `
-    <div id="${id}" class="toast show align-items-center border-0 shadow mb-2" role="alert">
-      <div class="d-flex"><div class="toast-body"><i class="bi bi-${icon} ${color} me-2"></i>${msg}</div>
-      <button type="button" class="btn-close me-2 m-auto" onclick="document.getElementById('${id}').remove()"></button></div>
-    </div>`);
-  setTimeout(() => document.getElementById(id)?.remove(), 4000);
+// SQLite stores UTC without a zone; show everything in Berlin time.
+const toDate = s => !s ? null : new Date(/[zZ+]/.test(String(s).slice(10)) ? s : String(s).replace(' ', 'T') + 'Z');
+const berlin = (s, opts) => { const d = toDate(s); return d ? d.toLocaleString('de-DE', { timeZone: 'Europe/Berlin', ...opts }) : '—'; };
+const fmtTime = s => berlin(s, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+const fmtClock = s => berlin(s, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const fmtMs = ms => ms == null || isNaN(ms) ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)}m ${Math.round(ms % 60000 / 1000)}s`;
+function ago(s) {
+  const d = toDate(s); if (!d) return '—';
+  const m = Math.round((Date.now() - d) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 36) return `${h} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+function dayRange(days) {  // UTC calendar days, oldest first, to match SQLite DATE()
+  const out = [], now = new Date();
+  for (let i = days - 1; i >= 0; i--) out.push(new Date(now - i * 864e5).toISOString().slice(0, 10));
+  return out;
+}
+const shortDay = d => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
+const botColor = id => css(SERIES[(id - 1) % SERIES.length]);
+
+function toast(msg, type = 'ok') {
+  const el = document.createElement('div');
+  el.className = 'toast-x';
+  el.innerHTML = `<i class="bi ${type === 'ok' ? 'bi-check-circle-fill text-success' : 'bi-exclamation-triangle-fill text-warning'}"></i><span>${esc(msg)}</span>`;
+  $('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+const empty = (cols, icon, text) => `<tr><td colspan="${cols}"><div class="empty"><i class="bi bi-${icon}"></i>${text}</div></td></tr>`;
+const loadingRow = cols => `<tr><td colspan="${cols}"><div class="skeleton"><span class="spinner-border spinner-border-sm"></span></div></td></tr>`;
+
+function tile(label, value, sub, icon) {
+  return `<div class="tile"><div class="label">${icon ? `<i class="bi bi-${icon}"></i>` : ''}${label}</div><div class="value">${value}</div><div class="sub">${sub || '&nbsp;'}</div></div>`;
+}
+function delta(now, before, unit = '') {
+  if (now == null || before == null) return '';
+  const d = now - before;
+  if (!d) return `<span>no change${unit}</span>`;
+  return `<span class="${d > 0 ? 'delta-up' : 'delta-down'}"><i class="bi bi-arrow-${d > 0 ? 'up' : 'down'}-short"></i>${d > 0 ? '+' : ''}${d}</span>${unit}`;
 }
 
-function fmtTime(ts) {
-  if (!ts) return '—';
-  const d = new Date(ts);
-  return d.toLocaleString();
+function runPill(r) {
+  if (!r) return '<span class="pill pill-mute">never</span>';
+  if (!r.finished_at) return '<span class="pill pill-info"><span class="spinner-grow" style="width:6px;height:6px"></span>running</span>';
+  if (r.status !== 'success') return `<span class="pill pill-bad"><i class="bi bi-x-circle"></i>failed</span>`;
+  return r.posted ? `<span class="pill pill-good"><i class="bi bi-check-circle"></i>posted ${r.posted}</span>`
+                  : '<span class="pill pill-mute"><i class="bi bi-check"></i>nothing to post</span>';
 }
-
-function fmtDuration(ms) {
-  if (!ms) return '—';
-  return ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(1) + 's';
+function postPill(p) {
+  if (p.posted) return '<span class="pill pill-good"><i class="bi bi-check-circle"></i>sent</span>';
+  const err = p.error || '';
+  if (err.startsWith('skipped: ')) return `<span class="pill pill-warn"><i class="bi bi-skip-forward"></i>skipped</span><div class="small-muted mt-1">${esc(err.slice(9))}</div>`;
+  return `<span class="pill pill-bad"><i class="bi bi-x-circle"></i>failed</span><div class="small-muted mt-1">${esc(err)}</div>`;
 }
+const botPill = b => b.active ? '<span class="pill pill-good"><span class="d"></span>Active</span>' : '<span class="pill pill-mute"><span class="d"></span>Paused</span>';
+const typePill = b => b.mode === 'learning' ? `<span class="pill pill-info"><i class="bi bi-mortarboard"></i>Learning ${esc(b.level || '')}</span>` : '<span class="pill pill-mute"><i class="bi bi-newspaper"></i>News</span>';
+const channelLink = (channel, chatId) => channel ? `<a href="https://t.me/${esc(channel)}" target="_blank" rel="noopener">@${esc(channel)}</a>` : `<span class="small-muted">${esc(chatId || '—')}</span>`;
+const hours = b => (b.post_from_hour ?? 0) === (b.post_until_hour ?? 0) ? 'any time' : `${String(b.post_from_hour).padStart(2, '0')}:00–${String(b.post_until_hour).padStart(2, '0')}:00`;
 
-function sentimentBadge(s) {
-  if (!s) return '<span class="badge bg-secondary bg-opacity-25 text-secondary">—</span>';
-  const map = {positive: 'success', negative: 'danger', neutral: 'secondary'};
-  return `<span class="badge bg-${map[s] || 'secondary'} bg-opacity-25 text-${map[s] || 'secondary'}">${s}</span>`;
+// ── Charts ────────────────────────────────────────────────────────────────────
+const charts = {};
+Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+Chart.defaults.font.size = 11;
+Chart.defaults.color = '#64748b';
+
+function legend(id, items) {
+  $(id).innerHTML = items.length > 1 ? items.map(i => `<span><span class="swatch" style="background:${i.color}"></span>${esc(i.label)}</span>`).join('') : '';
 }
-
-// ── Dashboard ─────────────────────────────────────────────────────────────────
-async function loadDashboard() {
-  const [stats, chart, activity] = await Promise.all([
-    api('/panel/api/stats'),
-    api('/panel/api/activity/chart?days=7'),
-    api('/panel/api/activity?limit=8'),
-  ]);
-
-  document.getElementById('stat-bots').textContent = stats.active_bots ?? '0';
-  document.getElementById('stat-fetched').textContent = stats.fetched_today ?? '0';
-  document.getElementById('stat-returned').textContent = stats.returned_today ?? '0';
-  document.getElementById('stat-posts').textContent = stats.total_posts ?? '0';
-
-  document.getElementById('today-summary').innerHTML = `
-    <div class="d-flex justify-content-between py-2 border-bottom"><span>Total Bots</span><strong>${stats.total_bots}</strong></div>
-    <div class="d-flex justify-content-between py-2 border-bottom"><span>Active Bots</span><strong>${stats.active_bots}</strong></div>
-    <div class="d-flex justify-content-between py-2 border-bottom"><span>Fetched Today</span><strong>${stats.fetched_today}</strong></div>
-    <div class="d-flex justify-content-between py-2 border-bottom"><span>Returned Today</span><strong>${stats.returned_today}</strong></div>
-    <div class="d-flex justify-content-between py-2 border-bottom"><span>Errors Today</span><strong class="${stats.errors_today > 0 ? 'text-danger' : ''}">${stats.errors_today}</strong></div>
-    <div class="d-flex justify-content-between py-2"><span>Total Posts</span><strong>${stats.total_posts}</strong></div>`;
-
-  // Chart
-  const labels = chart.map(r => r.day);
-  const fetched = chart.map(r => r.fetched);
-  const returned = chart.map(r => r.returned);
-  if (activityChart) activityChart.destroy();
-  activityChart = new Chart(document.getElementById('activity-chart'), {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label: 'Fetched', data: fetched, borderColor: '#0d6efd', backgroundColor: '#0d6efd20', tension: .3, fill: true },
-        { label: 'Returned', data: returned, borderColor: '#198754', backgroundColor: '#19875420', tension: .3, fill: true },
-      ]
+function drawChart(id, type, labels, datasets, { stacked = false } = {}) {
+  if (charts[id]) charts[id].destroy();
+  const surface = css('--surface');
+  datasets.forEach(d => type === 'bar'
+    ? Object.assign(d, { borderColor: surface, borderWidth: { top: 2 }, borderSkipped: 'bottom', borderRadius: 4, maxBarThickness: 28 })
+    : Object.assign(d, { borderWidth: 2, pointRadius: labels.length > 20 ? 0 : 3, pointHoverRadius: 5, pointBackgroundColor: d.borderColor, pointBorderColor: surface, tension: .25 }));
+  charts[id] = new Chart($(id), {
+    type, data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false },
+        tooltip: { backgroundColor: '#0f172a', padding: 10, cornerRadius: 8, boxPadding: 4, usePointStyle: true,
+          filter: i => i.raw !== 0 || datasets.length === 1 } },
+      scales: {
+        x: { stacked, grid: { display: false }, border: { color: '#d1d5db' }, ticks: { maxRotation: 0, autoSkipPadding: 12 } },
+        y: { stacked, beginAtZero: true, border: { display: false }, grid: { color: css('--grid') }, ticks: { precision: 0, maxTicksLimit: 5 } },
+      },
     },
-    options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } }
   });
-
-  // Recent activity
-  const tbody = document.getElementById('recent-activity');
-  tbody.innerHTML = activity.length ? activity.map(r => `
-    <tr>
-      <td class="small text-muted">${fmtTime(r.created_at)}</td>
-      <td><strong>${r.city_name}</strong></td>
-      <td><span class="badge bg-light text-dark">${r.source}</span></td>
-      <td>${r.fetched}</td>
-      <td>${r.returned}</td>
-      <td class="small">${fmtDuration(r.duration_ms)}</td>
-      <td>${r.error ? `<span class="badge bg-danger-subtle text-danger" title="${r.error}">Error</span>` : '<span class="badge bg-success-subtle text-success">OK</span>'}</td>
-    </tr>`).join('') : '<tr><td colspan="7" class="empty-state"><i class="bi bi-inbox"></i>No activity yet</td></tr>';
+}
+function postsByStatus(id, legendId, rows, days) {
+  const labels = dayRange(days), byDay = Object.fromEntries(rows.map(r => [r.day, r]));
+  const sets = ['sent', 'skipped', 'failed'].map(k => ({ label: k, backgroundColor: css(STATUS[k]), data: labels.map(d => (byDay[d] || {})[k] || 0) }));
+  legend(legendId, sets.map(s => ({ label: s.label, color: s.backgroundColor })));
+  drawChart(id, 'bar', labels.map(shortDay), sets, { stacked: true });
+}
+function aiByProvider(id, legendId, rows, days) {
+  const labels = dayRange(days);
+  const providers = [...new Set(rows.map(r => r.provider))].sort((a, b) => (PROVIDER_SLOT[a] ?? 9) - (PROVIDER_SLOT[b] ?? 9));
+  const sets = providers.map((p, i) => ({ label: p, backgroundColor: css(SERIES[PROVIDER_SLOT[p] ?? (3 + i)]),
+    data: labels.map(d => (rows.find(r => r.day === d && r.provider === p) || {}).requests || 0) }));
+  legend(legendId, sets.map(s => ({ label: s.label, color: s.backgroundColor })));
+  drawChart(id, 'bar', labels.map(shortDay), sets.length ? sets : [{ label: 'requests', backgroundColor: css('--s1'), data: labels.map(() => 0) }], { stacked: true });
 }
 
-// ── Bots ──────────────────────────────────────────────────────────────────────
-async function loadBots() {
-  const bots = await api('/panel/api/bots');
-  const grid = document.getElementById('bots-grid');
-  if (!bots.length) {
-    grid.innerHTML = `<div class="col-12"><div class="empty-state"><i class="bi bi-robot"></i>No bots yet. Click "Add Bot" to create one.</div></div>`;
-    return;
+// ── Router ────────────────────────────────────────────────────────────────────
+const state = { days: 14, botDays: 7, botId: null, botTab: 'report', bots: [] };
+
+function setHeader(title, crumbs, actions) {
+  $('title').textContent = title;
+  $('crumbs').innerHTML = crumbs.map(([t, h]) => h ? `<a href="${h}">${esc(t)}</a>` : esc(t)).join(' <span class="mx-1">/</span> ');
+  $('actions').innerHTML = actions || '';
+  document.title = `${title} · NewsFeed`;
+}
+function showView(name, nav) {
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+  document.querySelectorAll('#sidebar a.nav-item-link').forEach(a => a.classList.toggle('active', a.dataset.nav === nav));
+  window.scrollTo(0, 0);
+}
+const periodSeg = (cur, fn, opts = [[1, '24h'], [7, '7d'], [30, '30d'], [90, '90d']]) =>
+  `<div class="seg">${opts.map(([v, l]) => `<button class="${v === cur ? 'on' : ''}" onclick="${fn}(${v})">${l}</button>`).join('')}</div>`;
+
+function route() {
+  const parts = (location.hash.replace(/^#\/?/, '') || 'overview').split('/');
+  const [page, id, tab] = parts;
+  if (page === 'bots' && id) { state.botId = +id; state.botTab = tab || 'report'; return showBot(); }
+  const pages = { overview: showOverview, bots: showBots, runs: showRuns, posts: showPosts, preview: showPreview, settings: showSettings };
+  (pages[page] || showOverview)();
+}
+window.addEventListener('hashchange', route);
+
+async function loadSideBots() {
+  state.bots = await api('/panel/api/bots');
+  $('side-bots').innerHTML = state.bots.map(b => `<a class="nav-item-link bot-link" href="#/bots/${b.id}" data-nav="bot-${b.id}">
+    <span class="dot" style="background:${b.active ? css('--good') : '#475569'}"></span><span class="text-truncate">${esc(b.name)}</span></a>`).join('');
+}
+
+// ── Overview ──────────────────────────────────────────────────────────────────
+function setOvDays(d) { state.days = d; showOverview(); }
+async function showOverview() {
+  showView('overview', 'overview');
+  setHeader('Overview', [['NewsFeed']], `${periodSeg(state.days, 'setOvDays', [[7, '7d'], [14, '14d'], [30, '30d'], [90, '90d']])}
+    <button class="btn btn-sm btn-light-b" onclick="showOverview()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>`);
+  const [ov, runs] = await Promise.all([api(`/panel/api/overview?days=${state.days}`), api('/panel/api/runs?limit=8')]);
+  const bots = ov.bots;
+  const subs = bots.reduce((a, b) => a + (b.subscribers || 0), 0);
+  const subsBefore = bots.every(b => b.subscribers_week_ago == null) ? null : bots.reduce((a, b) => a + (b.subscribers_week_ago ?? b.subscribers ?? 0), 0);
+  const posts24 = bots.reduce((a, b) => a + b.posts_24h, 0);
+  const postsPeriod = bots.reduce((a, b) => a + b.posts_period, 0);
+  const ai = ov.ai_24h, okRate = ai.requests ? Math.round(100 * ai.ok / ai.requests) : null;
+  const learning = bots.some(b => b.mode === 'learning');
+  $('ov-tiles').innerHTML = [
+    tile('Subscribers', num(subs), subsBefore == null ? 'all channels, counted daily' : `${delta(subs, subsBefore)} vs. a week ago`, 'people'),
+    tile('Posts · 24h', num(posts24), `${num(postsPeriod)} in the last ${state.days} days`, 'send'),
+    tile('Active bots', `${bots.filter(b => b.active).length}<span class="fs-6 text-secondary fw-normal"> / ${bots.length}</span>`, 'posting on schedule', 'collection'),
+    tile('AI requests · 24h', num(ai.requests), okRate == null ? 'none yet' : `${okRate}% answered · ${num(ov.ai.tokens)} tokens in ${state.days}d`, 'stars'),
+    tile('Runs · 24h', num(ov.runs_24h.runs), ov.runs_24h.failed ? `<span class="delta-down">${ov.runs_24h.failed} failed</span>` : 'none failed', 'diagram-3'),
+  ].map(t => `<div class="col-6 col-md-4 col-xl">${t}</div>`).join('');
+
+  $('ov-opens-h').style.display = learning ? '' : 'none';
+  $('ov-bots').innerHTML = bots.length ? bots.map(b => `<tr class="clickable" onclick="location.hash='#/bots/${b.id}'">
+      <td><div class="d-flex align-items-center gap-2"><span class="swatch" style="background:${botColor(b.id)}"></span>
+        <div><div class="fw-semibold">${esc(b.name)}</div><div class="small-muted">${channelLink(b.channel, b.telegram_chat_id)} · ${b.mode === 'learning' ? `Learning ${esc(b.level || '')}` : 'News'}</div></div></div></td>
+      <td>${botPill(b)}${b.failed_runs_24h ? ` <span class="pill pill-bad">${b.failed_runs_24h} failed runs</span>` : ''}</td>
+      <td class="num">${b.subscribers == null ? '—' : num(b.subscribers)}<div class="small-muted">${delta(b.subscribers, b.subscribers_week_ago)}</div></td>
+      <td class="num">${num(b.posts_24h)}${b.max_posts_per_day ? `<span class="small-muted"> / ${b.max_posts_per_day}</span>` : ''}</td>
+      <td>${b.last_post_at ? `${ago(b.last_post_at)}<div class="small-muted">${fmtTime(b.last_post_at)}</div>` : '<span class="small-muted">never</span>'}</td>
+      <td>${runPill(b.last_run)}${b.last_run ? `<div class="small-muted mt-1">${ago(b.last_run.started_at)}</div>` : ''}</td>
+      ${learning ? `<td class="num">${b.mode === 'learning' ? num(b.opens_period) : ''}</td>` : ''}</tr>`).join('')
+    : empty(7, 'robot', 'No bots yet. <a href="#/bots">Add one</a>.');
+
+  // Posts per day, one colour per bot (colour follows the bot, not its rank).
+  const labels = dayRange(state.days);
+  const sets = bots.filter(b => ov.daily_posts.some(r => r.bot_id === b.id)).map(b => ({
+    label: b.name, backgroundColor: botColor(b.id),
+    data: labels.map(d => (ov.daily_posts.find(r => r.day === d && r.bot_id === b.id) || {}).sent || 0) }));
+  legend('lg-ov-posts', sets.map(s => ({ label: s.label, color: s.backgroundColor })));
+  $('ov-posts-hint').textContent = sets.length === 1 ? sets[0].label : 'by bot';
+  drawChart('ch-ov-posts', 'bar', labels.map(shortDay), sets.length ? sets : [{ label: 'posts', backgroundColor: css('--s1'), data: labels.map(() => 0) }], { stacked: true });
+  aiByProvider('ch-ov-ai', 'lg-ov-ai', ov.daily_ai, state.days);
+
+  renderRunRows('ov-runs', runs, { compact: true });
+  $('ov-prov-hint').textContent = `last ${state.days} days`;
+  $('ov-providers').innerHTML = ov.providers.length ? ov.providers.map(p => `<tr>
+      <td><span class="swatch" style="background:${css(SERIES[PROVIDER_SLOT[p.provider] ?? 3])}"></span>${esc(p.provider)}</td>
+      <td class="num">${num(p.requests)}</td><td class="num">${p.requests ? Math.round(100 * p.ok / p.requests) : 0}%</td><td class="num">${fmtMs(p.avg_ms)}</td></tr>`).join('')
+    : empty(4, 'stars', 'No AI requests in this period');
+}
+
+// ── Bots list ─────────────────────────────────────────────────────────────────
+async function showBots() {
+  showView('bots', 'bots');
+  setHeader('Bots', [['NewsFeed', '#/overview'], ['Bots']], `<button class="btn btn-sm btn-primary" onclick="openBotModal()"><i class="bi bi-plus-lg me-1"></i>Add bot</button>`);
+  $('bots-table').innerHTML = loadingRow(7);
+  const ov = await api('/panel/api/overview?days=7');
+  $('bots-table').innerHTML = ov.bots.length ? ov.bots.map(b => `<tr class="clickable" onclick="location.hash='#/bots/${b.id}'">
+      <td><div class="d-flex align-items-center gap-2"><span class="swatch" style="background:${botColor(b.id)}"></span><span class="fw-semibold">${esc(b.name)}</span></div></td>
+      <td onclick="event.stopPropagation()">${channelLink(b.channel, b.telegram_chat_id)}</td>
+      <td>${typePill(b)}</td>
+      <td class="small">${b.max_posts_per_day || '∞'} / day · ${hours(b)}<div class="small-muted">checks every ${b.run_every_minutes || 60} min</div></td>
+      <td class="num">${b.subscribers == null ? '—' : num(b.subscribers)}</td>
+      <td>${botPill(b)}</td>
+      <td class="text-end text-nowrap" onclick="event.stopPropagation()">
+        <button class="btn btn-sm btn-light-b" onclick="editBot(${b.id})" title="Edit"><i class="bi bi-pencil"></i></button>
+        <a class="btn btn-sm btn-light-b" href="#/bots/${b.id}">Open <i class="bi bi-chevron-right"></i></a></td></tr>`).join('')
+    : empty(7, 'robot', 'No bots yet. Click “Add bot” to create one.');
+}
+
+// ── Bot detail ────────────────────────────────────────────────────────────────
+function setBotDays(d) { state.botDays = d; showBot(); }
+let botData = null;
+
+async function showBot() {
+  showView('bot', `bot-${state.botId}`);
+  const id = state.botId;
+  const known = state.bots.find(b => b.id === id);
+  setHeader(known ? known.name : 'Bot', [['NewsFeed', '#/overview'], ['Bots', '#/bots'], [known ? known.name : `#${id}`]], '');
+  document.querySelectorAll('#bot-tabs a').forEach(a => {
+    a.href = `#/bots/${id}/${a.dataset.tab}`;
+    a.classList.toggle('on', a.dataset.tab === state.botTab);
+  });
+  document.querySelectorAll('.bot-tab').forEach(t => t.style.display = t.id === `bot-tab-${state.botTab}` ? '' : 'none');
+
+  const data = await api(`/panel/api/bots/${id}/report?days=${state.botDays}&posts=100`);
+  if (data.error) { $('bot-header').innerHTML = `<div class="empty"><i class="bi bi-question-circle"></i>Bot not found. <a href="#/bots">Back to bots</a></div>`; return; }
+  botData = data;
+  const b = data.bot, r = data.report;
+  setHeader(b.name, [['NewsFeed', '#/overview'], ['Bots', '#/bots'], [b.name]],
+    `${periodSeg(state.botDays, 'setBotDays')}
+     <button class="btn btn-sm btn-light-b" onclick="showBot()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+     <div class="dropdown"><button class="btn btn-sm btn-light-b" data-bs-toggle="dropdown"><i class="bi bi-three-dots"></i></button>
+       <ul class="dropdown-menu dropdown-menu-end">
+         <li><a class="dropdown-item" href="#" onclick="editBot(${id});return false"><i class="bi bi-pencil me-2"></i>Edit</a></li>
+         <li><a class="dropdown-item" href="#" onclick="testBot(${id});return false"><i class="bi bi-wifi me-2"></i>Test Telegram connection</a></li>
+         <li><hr class="dropdown-divider"></li>
+         <li><a class="dropdown-item text-danger" href="#" onclick="deleteBot(${id});return false"><i class="bi bi-trash me-2"></i>Delete</a></li>
+       </ul></div>
+     <button class="btn btn-sm btn-primary" id="run-btn" onclick="runBot(${id})"><i class="bi bi-play-fill me-1"></i>Run now</button>`);
+
+  const learning = b.mode === 'learning';
+  $('bot-header').innerHTML = `<div class="bot-head">
+      <div class="avatar" style="background:${botColor(b.id)}">${esc(b.name.trim()[0] || '?')}</div>
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 flex-wrap"><span class="fw-semibold fs-6">${esc(b.name)}</span>${botPill(b)}${typePill(b)}</div>
+        <div class="meta-row">
+          <span class="chip"><i class="bi bi-telegram"></i>${channelLink(data.channel, b.telegram_chat_id)}</span>
+          <span class="chip"><i class="bi bi-translate"></i>${esc(b.news_language)} → ${esc(b.target_language)}</span>
+          <span class="chip"><i class="bi bi-calendar-check"></i>${b.max_posts_per_day || '∞'} posts/day</span>
+          <span class="chip"><i class="bi bi-clock"></i>${hours(b)} Berlin</span>
+          <span class="chip"><i class="bi bi-arrow-repeat"></i>checks every ${b.run_every_minutes || 60} min</span>
+        </div>
+      </div></div>`;
+
+  const subs = r.subscribers, last = subs.length ? subs[subs.length - 1].members : null;
+  const okRate = r.ai.requests ? Math.round(100 * r.ai.ok / r.ai.requests) : null;
+  const period = state.botDays === 1 ? '24 hours' : `${state.botDays} days`;
+  const tiles = [
+    tile('Subscribers', last == null ? '—' : num(last), subs.length > 1 ? `${delta(last, subs[0].members)} since ${shortDay(subs[0].day)}` : 'counted daily', 'people'),
+    tile('Posts sent', num(r.posts.sent), `${num(r.posts.skipped)} skipped · ${num(r.posts.failed)} failed`, 'send'),
+  ];
+  if (learning) tiles.push(tile('Üben taps', num(r.opens), 'anonymous button taps', 'hand-index'));
+  tiles.push(tile('Reactions', num(r.reactions), `on posts of the last ${period}`, 'emoji-smile'));
+  tiles.push(tile('AI requests', num(r.ai.requests), okRate == null ? 'none in this period' : `${okRate}% answered · ${num(r.ai.prompt_tokens + r.ai.completion_tokens)} tokens`, 'stars'));
+  tiles.push(tile('Runs', num(r.runs.runs), r.runs.failed ? `<span class="delta-down">${r.runs.failed} failed</span> · ${num(r.runs.fetched)} articles fetched` : `${num(r.runs.fetched)} articles fetched`, 'diagram-3'));
+  $('bot-tiles').innerHTML = tiles.map(t => `<div class="col-6 col-md-4 col-xl">${t}</div>`).join('');
+
+  const chartDays = Math.max(state.botDays, 7);
+  drawChart('ch-bot-subs', 'line', subs.map(s => shortDay(s.day)),
+    [{ label: 'Subscribers', data: subs.map(s => s.members), borderColor: botColor(b.id), backgroundColor: botColor(b.id) }]);
+  postsByStatus('ch-bot-posts', 'lg-bot-posts', r.daily_posts, chartDays);
+  aiByProvider('ch-bot-ai', 'lg-bot-ai', r.daily_ai, chartDays);
+
+  // Posts
+  const tg = data.channel;
+  $('bot-posts-head').innerHTML = `<tr><th>Time</th><th>Article</th><th>Result</th>${learning ? '<th class="num">Üben</th>' : ''}<th class="num">Reactions</th><th></th></tr>`;
+  $('bot-posts').innerHTML = data.posts.length ? data.posts.map(p => postRow(p, tg, { learning })).join('') : empty(6, 'inbox', 'No posts yet');
+
+  // AI usage
+  $('bot-models').innerHTML = r.models.length ? r.models.map(m => `<tr>
+      <td><span class="swatch" style="background:${css(SERIES[PROVIDER_SLOT[m.provider] ?? 3])}"></span>${esc(m.provider)}</td>
+      <td class="small font-monospace">${esc(m.model)}</td><td>${esc(PURPOSE_LABEL[m.purpose] || m.purpose || '—')}</td>
+      <td class="num">${num(m.requests)}</td><td class="num">${m.requests ? Math.round(100 * m.ok / m.requests) : 0}%</td>
+      <td class="num">${fmtMs(m.avg_ms)}</td><td class="num">${num(m.prompt_tokens)}</td><td class="num">${num(m.completion_tokens)}</td></tr>`).join('')
+    : empty(8, 'stars', `No AI requests in the last ${period}`);
+
+  // Config
+  const cfg = [['Name', b.name], ['City', `${b.city_name}, ${b.country_code}`], ['Mode', learning ? `Language learning (${b.level})` : 'News'],
+    ['Source language', b.news_language], ['Channel language', b.target_language], ['Telegram chat', b.telegram_chat_id],
+    ['Bot token', b.bot_token_masked || '—'], ['Posts per day', b.max_posts_per_day || 'no limit'], ['Posting hours', `${hours(b)} (Berlin)`],
+    ['Checks every', `${b.run_every_minutes || 60} minutes`], ['Extra feeds', (b.custom_feeds || '').trim() || 'none']];
+  $('bot-config').innerHTML = cfg.map(([k, v]) => `<div class="col-md-6 col-xl-4"><div class="small-muted">${k}</div>
+    <div class="fw-medium ${k === 'Extra feeds' ? 'small font-monospace text-break' : ''}" style="white-space:pre-line">${esc(v)}</div></div>`).join('');
+
+  loadBotRuns();
+}
+
+async function loadBotRuns() {
+  $('bot-runs').innerHTML = loadingRow(8);
+  renderRunRows('bot-runs', await api(`/panel/api/bots/${state.botId}/runs?limit=100`), { showBot: false });
+}
+
+function postRow(p, channel, { learning, showBot } = {}) {
+  const tg = p.message_id && channel ? `<a class="btn btn-sm btn-light-b" href="https://t.me/${esc(channel)}/${p.message_id}" target="_blank" rel="noopener" title="Open in Telegram"><i class="bi bi-telegram"></i></a>` : '';
+  const src = p.url ? `<a class="btn btn-sm btn-light-b" href="${esc(p.url)}" target="_blank" rel="noopener" title="Source article"><i class="bi bi-box-arrow-up-right"></i></a>` : '';
+  let detail = '';
+  try { detail = Object.entries(JSON.parse(p.reaction_detail || '{}')).map(([k, v]) => `${k} ${v}`).join('  '); } catch (e) {}
+  return `<tr><td class="text-nowrap">${fmtTime(p.posted_at)}<div class="small-muted">${ago(p.posted_at)}</div></td>
+    ${showBot ? `<td class="text-nowrap"><a href="#/bots/${p.bot_id}" class="text-reset"><span class="swatch" style="background:${botColor(p.bot_id)}"></span>${esc(p.bot_name || '#' + p.bot_id)}</a></td>` : ''}
+    <td class="t-title"><div class="ttl" ${hasRtl(p.title) ? 'dir="rtl"' : ''}>${esc(p.title)}</div></td>
+    <td>${postPill(p)}</td>
+    ${learning ? `<td class="num">${p.posted && p.lesson_id ? num(p.opens || 0) : ''}</td>` : ''}
+    <td class="num" title="${esc(detail)}">${p.reactions != null ? num(p.reactions) : '<span class="small-muted">—</span>'}${detail ? `<div class="small-muted">${esc(detail)}</div>` : ''}</td>
+    <td class="text-end text-nowrap">${tg} ${src}</td></tr>`;
+}
+
+function renderRunRows(target, runs, { compact = false, showBot = true } = {}) {
+  const cols = compact ? 5 : showBot ? 9 : 8;
+  $(target).innerHTML = runs.length ? runs.map(r => {
+    const dur = r.finished_at ? toDate(r.finished_at) - toDate(r.started_at) : null;
+    const bot = `<td class="text-nowrap"><span class="swatch" style="background:${botColor(r.bot_id)}"></span>${esc(r.bot_name || '#' + r.bot_id)}</td>`;
+    if (compact) return `<tr class="clickable" onclick="openRun(${r.id})"><td class="text-nowrap">${fmtTime(r.started_at)}<div class="small-muted">${ago(r.started_at)}</div></td>${bot}<td>${runPill(r)}</td><td class="num">${num(r.ai_calls)}</td><td class="num">${fmtMs(dur)}</td></tr>`;
+    return `<tr class="clickable" onclick="openRun(${r.id})"><td class="text-nowrap">${fmtTime(r.started_at)}<div class="small-muted">${ago(r.started_at)}</div></td>
+      ${showBot ? bot : ''}<td><span class="pill pill-mute">${r.trigger === 'manual' ? '<i class="bi bi-hand-index"></i>manual' : '<i class="bi bi-clock"></i>schedule'}</span></td>
+      <td>${runPill(r)}</td><td class="num">${num(r.fetched)}</td><td class="num">${num(r.posted)}</td><td class="num">${num(r.ai_calls)}</td>
+      <td class="num">${fmtMs(dur)}</td><td class="small text-danger" style="max-width:280px">${esc(r.error || '')}</td></tr>`;
+  }).join('') : empty(cols, 'diagram-3', 'No runs recorded yet');
+}
+
+// ── Run trace ─────────────────────────────────────────────────────────────────
+const STEP = {
+  fetch: ['Fetched feeds', 'cloud-download'], candidates: ['Ranked candidate articles', 'list-ol'], article: ['Trying article', 'file-earmark-text'],
+  skip: ['Skipped', 'skip-forward'], format: ['Built the post', 'layout-text-window'], sent: ['Posted to Telegram', 'send-check'], 'send failed': ['Sending failed', 'x-octagon'],
+};
+const STEP_CLASS = { sent: 'ok', 'send failed': 'bad', skip: 'skip' };
+const PURPOSE_LABEL = { lesson: 'Write the lesson', check: 'Fact-check the lesson', post: 'Write the post' };
+const pretty = t => { try { return JSON.stringify(JSON.parse(t), null, 2); } catch (e) { return t; } };
+
+function stepDetail(item) {
+  if (!item.detail) return '';
+  let data = null;
+  try { data = JSON.parse(item.detail); } catch (e) {}
+  if (item.step === 'candidates' && Array.isArray(data)) {
+    return `<details><summary>Show ${data.length} articles</summary><div class="table-responsive"><table class="table mini-table mt-1">
+      <thead><tr><th>Title</th><th>Source</th><th class="num">Relevance</th></tr></thead><tbody>${data.map(a => `<tr>
+      <td><a href="${esc(a.url)}" target="_blank" rel="noopener" ${hasRtl(a.title) ? 'dir="rtl"' : ''}>${esc(a.title)}</a></td><td>${esc(a.source)}</td>
+      <td class="num">${a.relevance == null ? '' : Number(a.relevance).toFixed(2)}</td></tr>`).join('')}</tbody></table></div></details>`;
   }
-  grid.innerHTML = bots.map(b => `
-    <div class="col-md-6 col-lg-4">
-      <div class="card bot-card p-3">
-        <div class="d-flex align-items-start justify-content-between mb-2">
-          <div>
-            <div class="fw-semibold">${b.name}</div>
-            <div class="text-muted small"><i class="bi bi-geo-alt me-1"></i>${b.city_name}, ${b.country_code}</div>
-          </div>
-          <span class="badge ${b.active ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">${b.active ? 'Active' : 'Inactive'}</span>${b.mode === 'learning' ? ` <span class="badge bg-info-subtle text-info">Learning ${b.level || ''}</span>` : ''}
-        </div>
-        <div class="small text-muted mb-1"><i class="bi bi-telegram me-1"></i>${b.bot_token_masked || '—'}</div>
-        <div class="small text-muted mb-3"><i class="bi bi-chat me-1"></i>Chat: ${b.telegram_chat_id}</div>
-        <div class="d-flex flex-wrap gap-2">
-          <button class="btn btn-sm btn-primary" onclick="runBot(${b.id}, this)"><i class="bi bi-play-fill me-1"></i>Run</button>
-          <button class="btn btn-sm btn-outline-secondary" onclick="testBot(${b.id}, this)"><i class="bi bi-wifi me-1"></i>Test</button>
-          <a class="btn btn-sm btn-outline-primary" href="/panel/bot/${b.id}"><i class="bi bi-bar-chart-line me-1"></i>Report</a>
-          <button class="btn btn-sm btn-outline-secondary" onclick="viewBotPosts(${b.id}, '${b.name}')"><i class="bi bi-clock-history me-1"></i>History</button>
-          <button class="btn btn-sm btn-outline-primary" onclick="editBot(${b.id})"><i class="bi bi-pencil"></i></button>
-          <button class="btn btn-sm btn-outline-danger" onclick="deleteBot(${b.id})"><i class="bi bi-trash"></i></button>
-        </div>
-      </div>
-    </div>`).join('');
+  if (data && data.url && Object.keys(data).length <= 4) {
+    const extra = Object.entries(data).filter(([k, v]) => k !== 'url' && v != null).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join(' · ');
+    return `<div class="small text-truncate"><a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url)}</a></div>${extra ? `<div class="small-muted">${extra}</div>` : ''}`;
+  }
+  return `<details><summary>Details</summary><pre class="code">${esc(pretty(item.detail))}</pre></details>`;
 }
 
-async function runBot(id, btn) {
-  const orig = btn.innerHTML;
+function traceItem(item) {
+  if (item.type === 'ai') {
+    const ok = item.status === 200;
+    const tokens = item.prompt_tokens != null ? ` · ${num(item.prompt_tokens)} → ${num(item.completion_tokens)} tokens` : '';
+    return `<div class="tl-item ai ${ok ? '' : 'bad'}"><div class="tl-icon"><i class="bi bi-stars"></i></div>
+      <div class="tl-head"><b>AI · ${esc(PURPOSE_LABEL[item.purpose] || 'request')}</b>
+        ${ok ? '' : `<span class="pill pill-bad">${item.status ? 'HTTP ' + item.status : 'no answer'}</span>`}<span class="tl-time">${fmtClock(item.ts)}</span></div>
+      <div class="tl-body">${esc(item.provider)} · <span class="font-monospace small">${esc(item.model)}</span> · ${fmtMs(item.duration_ms)}${tokens}</div>
+      ${item.error ? `<div class="small text-danger mt-1">${esc(item.error)}</div>` : ''}
+      ${item.response ? `<details${ok ? '' : ' open'}><summary>AI answer</summary><pre class="code" dir="auto">${esc(pretty(item.response))}</pre></details>` : ''}</div>`;
+  }
+  const [label, icon] = STEP[item.step] || [item.step, 'dot'];
+  return `<div class="tl-item ${STEP_CLASS[item.step] || ''}"><div class="tl-icon"><i class="bi bi-${icon}"></i></div>
+    <div class="tl-head"><b>${esc(label)}</b><span class="tl-time">${fmtClock(item.ts)}</span></div>
+    ${item.summary ? `<div class="tl-body" ${hasRtl(item.summary) ? 'dir="auto"' : ''}>${esc(item.summary)}</div>` : ''}
+    ${stepDetail(item)}</div>`;
+}
+
+async function openRun(id) {
+  const drawer = bootstrap.Offcanvas.getOrCreateInstance($('trace'));
+  $('trace-title').textContent = `Run #${id}`;
+  $('trace-sub').textContent = 'Loading…';
+  $('trace-body').innerHTML = '<div class="skeleton"><span class="spinner-border spinner-border-sm"></span></div>';
+  drawer.show();
+  const run = await api(`/panel/api/runs/${id}`);
+  if (run.error) { $('trace-body').innerHTML = `<div class="empty">${esc(run.error)}</div>`; return; }
+  const bot = state.bots.find(b => b.id === run.bot_id);
+  const dur = run.finished_at ? toDate(run.finished_at) - toDate(run.started_at) : null;
+  $('trace-sub').innerHTML = `${esc(bot ? bot.name : 'Bot #' + run.bot_id)} · ${run.trigger === 'manual' ? 'started by hand' : 'scheduled'}`;
+  $('trace-title').innerHTML = `Run #${run.id} <span class="ms-2">${runPill(run)}</span>`;
+  const items = run.timeline || [];
+  const aiCount = items.filter(i => i.type === 'ai').length;
+  $('trace-body').innerHTML = `
+    <div class="row g-2 mb-3">
+      ${[['Started', fmtTime(run.started_at)], ['Duration', fmtMs(dur)], ['Fetched', num(run.fetched)], ['Posted', num(run.posted)], ['AI requests', num(aiCount)]]
+        .map(([k, v]) => `<div class="col"><div class="tile py-2"><div class="label">${k}</div><div class="fw-semibold">${v}</div></div></div>`).join('')}
+    </div>
+    ${run.error ? `<div class="alert alert-danger py-2 small">${esc(run.error)}</div>` : ''}
+    ${items.length ? `<div class="tl">${items.map(traceItem).join('')}</div>`
+      : '<div class="empty"><i class="bi bi-hourglass"></i>No steps recorded for this run.<div class="small mt-1">Steps are kept for 30 days.</div></div>'}`;
+}
+
+// ── Runs & posts (all bots) ───────────────────────────────────────────────────
+const botFilter = (cur, fn) => `<select class="form-select form-select-sm" style="width:auto" onchange="${fn}(this.value)">
+  <option value="">All bots</option>${state.bots.map(b => `<option value="${b.id}" ${String(b.id) === String(cur) ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select>`;
+let runsBot = '', postsBot = '';
+function setRunsBot(v) { runsBot = v; showRuns(); }
+function setPostsBot(v) { postsBot = v; showPosts(); }
+
+async function showRuns() {
+  showView('runs', 'runs');
+  setHeader('Runs & traces', [['NewsFeed', '#/overview'], ['Runs']], `${botFilter(runsBot, 'setRunsBot')}
+    <button class="btn btn-sm btn-light-b" onclick="showRuns()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>`);
+  $('runs-table').innerHTML = loadingRow(9);
+  renderRunRows('runs-table', await api(`/panel/api/runs?limit=150${runsBot ? '&bot_id=' + runsBot : ''}`));
+}
+
+async function showPosts() {
+  showView('posts', 'posts');
+  setHeader('Posts', [['NewsFeed', '#/overview'], ['Posts']], `${botFilter(postsBot, 'setPostsBot')}
+    <button class="btn btn-sm btn-light-b" onclick="showPosts()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>`);
+  $('posts-table').innerHTML = loadingRow(7);
+  const [posts, ov] = await Promise.all([api(`/panel/api/posts/recent?limit=150${postsBot ? '&bot_id=' + postsBot : ''}`), api('/panel/api/overview?days=1')]);
+  const channels = Object.fromEntries(ov.bots.map(b => [b.id, b.channel]));
+  $('posts-table').innerHTML = posts.length ? posts.map(p => postRow(p, channels[p.bot_id], { learning: true, showBot: true })).join('') : empty(7, 'inbox', 'No posts yet');
+}
+
+// ── Bot actions ───────────────────────────────────────────────────────────────
+async function runBot(id) {
+  const btn = $('run-btn'), orig = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-sm me-1"></span>Running...';
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running…';
   try {
     const res = await api(`/panel/api/bots/${id}/run`, { method: 'POST' });
     if (res.error) toast(`Error: ${res.error}`, 'error');
-    else toast(`Done — fetched ${res.fetched}, posted ${res.posted} in ${fmtDuration(res.duration_ms)}`);
-    loadDashboard();
-  } catch(e) { toast('Request failed', 'error'); }
-  btn.disabled = false;
-  btn.innerHTML = orig;
+    else toast(`Done: fetched ${res.fetched}, posted ${res.posted} in ${fmtMs(res.duration_ms)}`);
+  } catch (e) { toast('Request failed', 'error'); }
+  btn.disabled = false; btn.innerHTML = orig;
+  if (state.botId === id) showBot();
 }
 
-async function testBot(id, btn) {
-  const orig = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-sm me-1"></span>Testing...';
+async function testBot(id) {
+  toast('Testing the Telegram connection…');
   const res = await api(`/panel/api/bots/${id}/test`, { method: 'POST' });
-  btn.disabled = false;
-  btn.innerHTML = orig;
-  if (res.connected) toast('Telegram connection OK ✓');
+  if (res.connected) toast('Telegram connection OK');
   else toast('Connection failed: ' + (res.error || 'unknown'), 'error');
 }
 
-async function viewBotPosts(id, name) {
-  document.getElementById('posts-modal-title').textContent = `${name} — Posting History`;
-  const modal = new bootstrap.Modal(document.getElementById('posts-modal'));
-  document.getElementById('posts-modal-body').innerHTML = '<div class="text-center py-4"><div class="spinner-border"></div></div>';
-  modal.show();
-  const posts = await api(`/panel/api/bots/${id}/posts?limit=30`);
-  document.getElementById('posts-modal-body').innerHTML = posts.length
-    ? posts.map(p => postCard(p)).join('')
-    : '<div class="empty-state"><i class="bi bi-inbox"></i>No posts yet</div>';
-}
-
 function openBotModal(bot = null) {
-  document.getElementById('bot-id').value = bot?.id || '';
-  document.getElementById('bot-modal-title').textContent = bot ? 'Edit Bot' : 'Add Bot';
-  document.getElementById('bot-name').value = bot?.name || '';
-  document.getElementById('bot-city').value = bot?.city_name || '';
-  document.getElementById('bot-country').value = bot?.country_code || '';
-  document.getElementById('bot-lang').value = bot?.news_language || 'en';
-  document.getElementById('bot-target-lang').value = bot?.target_language || 'fa';
-  document.getElementById('bot-perday').value = bot ? bot.max_posts_per_day ?? 2 : 2;
-  document.getElementById('bot-every').value = bot?.run_every_minutes || 60;
-  document.getElementById('bot-from').value = bot ? bot.post_from_hour ?? 8 : 8;
-  document.getElementById('bot-until').value = bot ? bot.post_until_hour ?? 20 : 20;
-  document.getElementById('bot-mode').value = bot?.mode || 'news';
-  document.getElementById('bot-level').value = bot?.level || 'B1';
-  document.getElementById('bot-token').value = '';
-  document.getElementById('bot-chatid').value = bot?.telegram_chat_id || '';
-  document.getElementById('bot-feeds').value = bot?.custom_feeds || '';
-  document.getElementById('bot-active').checked = bot ? !!bot.active : true;
-  new bootstrap.Modal(document.getElementById('bot-modal')).show();
+  $('bot-id').value = bot?.id || '';
+  $('bot-modal-title').textContent = bot ? `Edit ${bot.name}` : 'Add bot';
+  $('bot-name').value = bot?.name || '';
+  $('bot-city').value = bot?.city_name || '';
+  $('bot-country').value = bot?.country_code || '';
+  $('bot-lang').value = bot?.news_language || 'en';
+  $('bot-target-lang').value = bot?.target_language || 'fa';
+  $('bot-perday').value = bot ? bot.max_posts_per_day ?? 2 : 2;
+  $('bot-every').value = bot?.run_every_minutes || 60;
+  $('bot-from').value = bot ? bot.post_from_hour ?? 8 : 8;
+  $('bot-until').value = bot ? bot.post_until_hour ?? 20 : 20;
+  $('bot-mode').value = bot?.mode || 'news';
+  $('bot-level').value = bot?.level || 'B1';
+  $('bot-token').value = '';
+  $('bot-token').placeholder = bot ? `Current: ${bot.bot_token_masked || 'not set'} (leave empty to keep)` : '1234567890:ABC…';
+  $('bot-chatid').value = bot?.telegram_chat_id || '';
+  $('bot-feeds').value = bot?.custom_feeds || '';
+  $('bot-active').checked = bot ? !!bot.active : true;
+  bootstrap.Modal.getOrCreateInstance($('bot-modal')).show();
 }
-
-async function editBot(id) {
-  const bot = await api(`/panel/api/bots/${id}`);
-  openBotModal(bot);
-}
+async function editBot(id) { openBotModal(await api(`/panel/api/bots/${id}`)); }
 
 async function saveBot() {
-  const id = document.getElementById('bot-id').value;
+  const id = $('bot-id').value;
   const data = {
-    name: document.getElementById('bot-name').value,
-    city_name: document.getElementById('bot-city').value,
-    country_code: document.getElementById('bot-country').value.toUpperCase(),
-    news_language: document.getElementById('bot-lang').value,
-    target_language: document.getElementById('bot-target-lang').value,
-    max_posts_per_day: parseInt(document.getElementById('bot-perday').value) || 0,
-    run_every_minutes: parseInt(document.getElementById('bot-every').value) || 60,
-    post_from_hour: parseInt(document.getElementById('bot-from').value) || 0,
-    post_until_hour: parseInt(document.getElementById('bot-until').value) || 0,
-    mode: document.getElementById('bot-mode').value,
-    level: document.getElementById('bot-level').value,
-    telegram_chat_id: document.getElementById('bot-chatid').value,
-    active: document.getElementById('bot-active').checked ? 1 : 0,
+    name: $('bot-name').value, city_name: $('bot-city').value, country_code: $('bot-country').value.toUpperCase(),
+    news_language: $('bot-lang').value, target_language: $('bot-target-lang').value,
+    max_posts_per_day: parseInt($('bot-perday').value) || 0, run_every_minutes: parseInt($('bot-every').value) || 60,
+    post_from_hour: parseInt($('bot-from').value) || 0, post_until_hour: parseInt($('bot-until').value) || 0,
+    mode: $('bot-mode').value, level: $('bot-level').value, telegram_chat_id: $('bot-chatid').value,
+    active: $('bot-active').checked ? 1 : 0,
   };
-  const token = document.getElementById('bot-token').value;
+  const token = $('bot-token').value;
   if (token) data.bot_token = token;
-  const feeds = document.getElementById('bot-feeds').value.trim();
-  if (feeds) data.custom_feeds = feeds;
-
-  const url = id ? `/panel/api/bots/${id}` : '/panel/api/bots';
-  const method = id ? 'PUT' : 'POST';
-  const res = await api(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  const feeds = $('bot-feeds').value.trim();
+  if (feeds || id) data.custom_feeds = feeds;
+  const res = await api(id ? `/panel/api/bots/${id}` : '/panel/api/bots', jsonOpts(id ? 'PUT' : 'POST', data));
   if (res.error) { toast('Error: ' + res.error, 'error'); return; }
-  bootstrap.Modal.getInstance(document.getElementById('bot-modal')).hide();
-  toast(id ? 'Bot updated' : 'Bot created');
-  loadBots();
+  bootstrap.Modal.getInstance($('bot-modal')).hide();
+  toast(id ? 'Bot saved' : 'Bot created');
+  await loadSideBots();
+  if (!id && res.id) location.hash = `#/bots/${res.id}`; else route();
 }
 
 async function deleteBot(id) {
-  if (!confirm('Delete this bot?')) return;
+  const bot = state.bots.find(b => b.id === id);
+  if (!confirm(`Delete "${bot ? bot.name : 'this bot'}"? Its settings are removed; the channel itself is not touched.`)) return;
   await api(`/panel/api/bots/${id}`, { method: 'DELETE' });
   toast('Bot deleted');
-  loadBots();
-}
-
-// ── Activity ──────────────────────────────────────────────────────────────────
-async function loadActivity() {
-  const data = await api('/panel/api/activity?limit=100');
-  const tbody = document.getElementById('activity-table');
-  tbody.innerHTML = data.length ? data.map(r => `
-    <tr>
-      <td class="small text-muted">${fmtTime(r.created_at)}</td>
-      <td><strong>${r.city_name}</strong></td>
-      <td><span class="badge bg-light text-dark">${r.source}</span></td>
-      <td>${r.fetched}</td>
-      <td>${r.returned}</td>
-      <td class="small">${fmtDuration(r.duration_ms)}</td>
-      <td>${r.error ? `<span class="text-danger small" title="${r.error}"><i class="bi bi-exclamation-triangle me-1"></i>${r.error.slice(0,60)}</span>` : '<span class="text-success small"><i class="bi bi-check-circle me-1"></i>OK</span>'}</td>
-    </tr>`).join('') : '<tr><td colspan="7" class="empty-state"><i class="bi bi-inbox"></i>No activity yet</td></tr>';
-}
-
-// ── Posts ─────────────────────────────────────────────────────────────────────
-function postCard(p) {
-  return `
-    <div class="article-card">
-      <div class="d-flex justify-content-between align-items-start mb-1">
-        <a href="${p.url || '#'}" target="_blank" class="fw-semibold text-decoration-none">${p.title}</a>
-        <div class="d-flex gap-1 ms-2 flex-shrink-0">
-          ${p.relevance_score != null ? `<span class="badge bg-primary bg-opacity-25 text-primary badge-relevance">${(p.relevance_score*100).toFixed(0)}%</span>` : ''}
-          ${sentimentBadge(p.sentiment)}
-        </div>
-      </div>
-      ${p.summary_en ? `<div class="small text-muted mb-1">${p.summary_en}</div>` : ''}
-      ${p.summary_fa ? `<div class="summary-fa">${p.summary_fa}</div>` : ''}
-      <div class="small text-muted mt-1">${fmtTime(p.posted_at)}</div>
-    </div>`;
-}
-
-async function loadPosts() {
-  const posts = await api('/panel/api/posts?limit=50');
-  const el = document.getElementById('posts-list');
-  el.innerHTML = posts.length ? posts.map(postCard).join('') : '<div class="empty-state"><i class="bi bi-inbox"></i>No posts yet</div>';
+  await loadSideBots();
+  location.hash = '#/bots';
 }
 
 // ── Preview ───────────────────────────────────────────────────────────────────
+function showPreview() {
+  showView('preview', 'preview');
+  setHeader('News preview', [['NewsFeed', '#/overview'], ['Tools'], ['News preview']], '');
+}
+
 async function runPreview() {
-  const btn = document.getElementById('preview-btn');
+  const btn = $('preview-btn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-sm me-1"></span>Fetching...';
-  document.getElementById('preview-results').innerHTML = '';
-
-  // Show progress panel
-  const progressEl = document.getElementById('preview-progress');
-  const stepEl = document.getElementById('progress-step');
-  const detailEl = document.getElementById('progress-detail');
-  const timerEl = document.getElementById('progress-timer');
-  const barEl = document.getElementById('progress-bar');
-  progressEl.classList.remove('d-none');
-
-  const startTime = Date.now();
-  const steps = [
-    [0,  5,  'Fetching RSS feeds…',         'Connecting to sources'],
-    [4,  20, 'Extracting article content…',  'Resolving URLs and scraping pages'],
-    [10, 45, 'Checking relevance…',          'Filtering articles for your city'],
-    [20, 70, 'Summarising…',                 'Building article summaries'],
-    [40, 85, 'Translating to Persian…',      'MyMemory / LibreTranslate running'],
-    [60, 95, 'Almost done…',                 'Finalising results'],
-  ];
-  let stepIdx = 0;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Fetching…';
+  $('preview-results').innerHTML = '';
+  $('preview-progress').classList.remove('d-none');
+  const started = Date.now();
+  const steps = [[0, 5, 'Fetching RSS feeds…', 'Connecting to sources'], [4, 20, 'Extracting article content…', 'Resolving URLs and reading pages'],
+    [10, 45, 'Checking relevance…', 'Filtering articles for the city'], [20, 70, 'Summarising…', 'Building summaries'],
+    [40, 85, 'Translating…', 'Translation running'], [60, 95, 'Almost done…', 'Finalising results']];
+  let idx = 0;
   const ticker = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    timerEl.textContent = elapsed + 's';
-    while (stepIdx < steps.length - 1 && elapsed >= steps[stepIdx + 1][0]) stepIdx++;
-    const [, pct, step, detail] = steps[stepIdx];
-    stepEl.textContent = step;
-    detailEl.textContent = detail;
-    barEl.style.width = pct + '%';
+    const s = Math.floor((Date.now() - started) / 1000);
+    $('progress-timer').textContent = s + 's';
+    while (idx < steps.length - 1 && s >= steps[idx + 1][0]) idx++;
+    const [, pct, step, detail] = steps[idx];
+    $('progress-step').textContent = step; $('progress-detail').textContent = detail; $('progress-bar').style.width = pct + '%';
   }, 500);
-
-  const body = {
-    city_name: document.getElementById('prev-city').value,
-    country_code: document.getElementById('prev-country').value.toUpperCase(),
-    news_language: document.getElementById('prev-lang').value,
-    max_results: parseInt(document.getElementById('prev-max').value),
-  };
-
-  const stopProgress = () => {
-    clearInterval(ticker);
-    progressEl.classList.add('d-none');
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-search me-1"></i>Fetch News';
-  };
-
+  const stop = () => { clearInterval(ticker); $('preview-progress').classList.add('d-none'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-search me-1"></i>Fetch news'; };
+  const body = { city_name: $('prev-city').value, country_code: $('prev-country').value.toUpperCase(),
+                 news_language: $('prev-lang').value, max_results: parseInt($('prev-max').value) };
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 300000);
-    const res = await fetch('/api/news', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body), signal: controller.signal })
-      .then(r => r.json()).finally(() => clearTimeout(timeout));
-    stopProgress();
-
-    if (res.error) { document.getElementById('preview-results').innerHTML = `<div class="alert alert-danger">${res.error}</div>`; return; }
-
-    const meta = `<div class="text-muted small mb-3">Fetched <strong>${res.fetched}</strong> articles, showing <strong>${res.returned}</strong> relevant results for <strong>${res.city}</strong></div>`;
-    const qualityBadge = q => ({
-      full_article:    '<span class="badge bg-success-subtle text-success me-1">📰 full article</span>',
-      rss_description: '<span class="badge bg-info-subtle text-info me-1">📋 rss snippet</span>',
-      title_only:      '<span class="badge bg-warning-subtle text-warning me-1">🔖 title only</span>',
-    }[q] || '');
-
-    const srcColor = s => { let h=0; for(let c of (s||'?')) h=(h*31+c.charCodeAt(0))&0xffffff; return '#'+h.toString(16).padStart(6,'0').slice(0,6); };
-    const imgOrPlaceholder = a => a.image_url
-      ? `<img src="${a.image_url}" alt="" style="width:90px;height:68px;object-fit:cover;border-radius:8px;flex-shrink:0" onerror="this.style.display='none'">`
-      : `<div style="width:90px;height:68px;border-radius:8px;flex-shrink:0;background:${srcColor(a.source)};display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.5rem;font-weight:700">${(a.source||'?')[0].toUpperCase()}</div>`;
-
-    const cards = res.articles.map(a => `
-      <div class="article-card">
-        <div class="d-flex gap-3">
-          ${imgOrPlaceholder(a)}
-          <div class="flex-grow-1 min-width-0">
-            <div class="d-flex justify-content-between align-items-start mb-1">
-              <a href="${a.url}" target="_blank" class="fw-semibold text-decoration-none">${a.title}</a>
-              <div class="d-flex gap-1 ms-2 flex-shrink-0">
-                <span class="badge bg-primary bg-opacity-25 text-primary badge-relevance">${(a.relevance_score*100).toFixed(0)}%</span>
-                ${sentimentBadge(a.sentiment)}
-              </div>
-            </div>
-            <div class="d-flex gap-3 small text-muted mb-1">
-              <span><i class="bi bi-broadcast me-1"></i>${a.source || '—'}</span>
-              ${a.published_at ? `<span><i class="bi bi-calendar3 me-1"></i>${fmtTime(a.published_at)}</span>` : ''}
-              <span>${qualityBadge(a.content_quality)}</span>
-            </div>
-            ${a.summary_en && a.summary_en !== a.title ? `<div class="small text-muted mb-1">${a.summary_en}</div>` : ''}
-            ${a.summary_fa ? `<div class="summary-fa">${a.summary_fa}</div>` : ''}
-          </div>
-        </div>
-      </div>`).join('');
-
-    document.getElementById('preview-results').innerHTML = meta + (cards || '<div class="empty-state"><i class="bi bi-search"></i>No relevant articles found</div>');
-  } catch(e) {
-    stopProgress();
-    document.getElementById('preview-results').innerHTML = `<div class="alert alert-danger">Request failed: ${e.message}</div>`;
-  }
+    const res = await fetch('/api/news', { ...jsonOpts('POST', body), signal: controller.signal }).then(r => r.json()).finally(() => clearTimeout(timeout));
+    stop();
+    if (res.error) { $('preview-results').innerHTML = `<div class="alert alert-danger">${esc(res.error)}</div>`; return; }
+    const quality = { full_article: ['pill-good', 'full article'], rss_description: ['pill-info', 'RSS snippet'], title_only: ['pill-warn', 'title only'] };
+    const cards = res.articles.map(a => {
+      const q = quality[a.content_quality];
+      const img = a.image_url ? `<img src="${esc(a.image_url)}" alt="" style="width:96px;height:72px;object-fit:cover;border-radius:8px;flex-shrink:0" onerror="this.remove()">` : '';
+      return `<div class="article-card"><div class="d-flex gap-3">${img}<div class="flex-grow-1" style="min-width:0">
+        <div class="d-flex justify-content-between gap-2"><a href="${esc(a.url)}" target="_blank" rel="noopener" class="fw-semibold text-decoration-none">${esc(a.title)}</a>
+          <span class="pill pill-info flex-shrink-0">${Math.round((a.relevance_score || 0) * 100)}% relevant</span></div>
+        <div class="d-flex flex-wrap gap-3 small-muted my-1"><span><i class="bi bi-broadcast me-1"></i>${esc(a.source || '—')}</span>
+          ${a.published_at ? `<span><i class="bi bi-calendar3 me-1"></i>${fmtTime(a.published_at)}</span>` : ''}${q ? `<span class="pill ${q[0]}">${q[1]}</span>` : ''}</div>
+        ${a.summary_en && a.summary_en !== a.title ? `<div class="small text-secondary">${esc(a.summary_en)}</div>` : ''}
+        ${a.summary_fa ? `<div class="summary-fa">${esc(a.summary_fa)}</div>` : ''}</div></div></div>`;
+    }).join('');
+    $('preview-results').innerHTML = `<div class="small-muted mb-2">Fetched <b>${res.fetched}</b> articles, <b>${res.returned}</b> relevant for <b>${esc(res.city)}</b></div>` +
+      (cards || '<div class="empty"><i class="bi bi-search"></i>No relevant articles found</div>');
+  } catch (e) { stop(); $('preview-results').innerHTML = `<div class="alert alert-danger">Request failed: ${esc(e.message)}</div>`; }
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
+const QUICK = [
+  ['Tübingen (official)', [['Tübingen Pressemitteilungen', 'https://www.tuebingen.de/pressemitteilungen.xml', 1, 'Pressemitteilungen'], ['Tübingen Nachrichten', 'https://www.tuebingen.de/news.xml', 1, 'Stadt Nachrichten'],
+    ['Tübingen Bekanntmachungen', 'https://www.tuebingen.de/amtliche_bekanntmachungen.xml', 1, 'Amtl. Bekanntmachungen'], ['Tagblatt Tübingen', 'https://www.tagblatt.de/rss/feed/', 0, 'Tagblatt']]],
+  ['German', [['Google News', 'https://news.google.com/rss/search?q={city}&hl={language}&gl={country}', 0], ['Tagesschau', 'https://www.tagesschau.de/xml/rss2', 1],
+    ['Süddeutsche Zeitung', 'https://rss.sueddeutsche.de/rss/Alles', 1], ['SPIEGEL Online', 'https://www.spiegel.de/schlagzeilen/index.rss', 1, 'SPIEGEL'],
+    ['ZEIT Online', 'https://newsfeed.zeit.de/all', 1], ['FAZ', 'https://www.faz.net/rss/aktuell/', 1], ['n-tv', 'https://www.n-tv.de/rss', 1],
+    ['Focus Online', 'https://rss.focus.de/fol/XML/rss_folnews.xml', 1], ['WELT', 'https://www.welt.de/feeds/latest.rss', 1], ['stern.de', 'https://www.stern.de/feed/standard/all/', 1],
+    ['Handelsblatt', 'https://www.handelsblatt.com/rss09/schlagzeilen.rss', 1], ['DW Deutsch', 'https://rss.dw.com/rdf/rss-de-all', 1],
+    ['Deutschlandfunk', 'https://www.deutschlandfunk.de/die-nachrichten.353.de.rss', 1], ['SWR BW', 'https://www.swr.de/swrde/nachrichten/bw/rss/feed-bw-nachrichten.xml', 1]]],
+  ['International (English)', [['DW English', 'https://rss.dw.com/rdf/rss-en-all', 1], ['BBC World', 'https://feeds.bbci.co.uk/news/world/rss.xml', 1],
+    ['Reuters', 'https://feeds.reuters.com/reuters/topNews', 1], ['Al Jazeera', 'https://www.aljazeera.com/xml/rss/all.xml', 1], ['Guardian World', 'https://www.theguardian.com/world/rss', 1, 'Guardian'],
+    ['NPR News', 'https://feeds.npr.org/1001/rss.xml', 1, 'NPR'], ['Associated Press', 'https://feeds.ap.org/rss/apf-topnews', 1, 'AP']]],
+  ['Tech', [['heise Online', 'https://www.heise.de/rss/heise-atom.xml', 1], ['Golem.de', 'https://rss.golem.de/rss.php?feed=RSS2.0', 1], ['TechCrunch', 'https://techcrunch.com/feed/', 1],
+    ['The Verge', 'https://www.theverge.com/rss/index.xml', 1], ['Ars Technica', 'https://feeds.arstechnica.com/arstechnica/index', 1]]],
+  ['Business & finance', [['Wirtschaftswoche', 'https://www.wiwo.de/rss/politik-und-wirtschaft', 1, 'WirtschaftsWoche'], ['Financial Times', 'https://www.ft.com/rss/home/uk', 1],
+    ['Bloomberg', 'https://feeds.bloomberg.com/markets/news.rss', 1]]],
+];
+let feedsCache = [];
+
+function showSettings() {
+  showView('settings', 'settings');
+  setHeader('Feeds & settings', [['NewsFeed', '#/overview'], ['Feeds & settings']], '');
+  loadFeeds(); loadSettings();
+}
+
 async function loadSettings() {
   const s = await api('/panel/api/settings');
-  const labels = {
-    LIBRETRANSLATE_URL: 'LibreTranslate URL',
-    AI_POST_WRITER: 'AI Post Writer',
-    MISTRAL_MODEL: 'Mistral Model',
-    MAX_ARTICLE_AGE_HOURS: 'Max Article Age (hours)',
-    SCHEDULE_INTERVAL_MINUTES: 'Auto-run Interval (minutes)',
-    DATA_DIR: 'Data Directory',
-    SERVICE_PORT: 'Service Port',
-    BOT_MANAGER_URL: 'Bot Manager URL',
-  };
-  document.getElementById('settings-list').innerHTML = Object.entries(s).map(([k, v]) => `
-    <div class="col-md-6">
-      <div class="p-3 bg-light rounded">
-        <div class="small text-muted mb-1">${labels[k] || k}</div>
-        <div class="fw-semibold font-monospace small">${v || '<span class="text-muted">not set</span>'}</div>
-      </div>
-    </div>`).join('');
+  const labels = { LIBRETRANSLATE_URL: 'LibreTranslate URL', AI_POST_WRITER: 'AI post writer', MISTRAL_MODEL: 'Mistral model',
+    MAX_ARTICLE_AGE_HOURS: 'Max article age (hours)', SCHEDULE_INTERVAL_MINUTES: 'Automatic runs (0 = off)', DATA_DIR: 'Data directory',
+    SERVICE_PORT: 'Service port', BOT_MANAGER_URL: 'Bot manager URL' };
+  $('settings-list').innerHTML = Object.entries(s).map(([k, v]) => `<div class="col-md-6 col-xl-3"><div class="small-muted">${esc(labels[k] || k)}</div>
+    <div class="fw-medium font-monospace small text-break">${v ? esc(v) : '<span class="text-secondary">not set</span>'}</div></div>`).join('');
 }
 
-// ── Global Feeds ──────────────────────────────────────────────────────────────
 async function loadFeeds() {
-  const feeds = await api('/panel/api/feeds');
-  const tbody = document.getElementById('feeds-table');
-  tbody.innerHTML = feeds.length ? feeds.map(f => `
-    <tr>
-      <td class="fw-semibold">${f.name}</td>
-      <td><a href="${f.url}" target="_blank" class="font-monospace small text-muted text-decoration-none">${f.url.length > 55 ? f.url.slice(0,55)+'…' : f.url}</a></td>
-      <td>
-        <div class="form-check form-switch mb-0">
-          <input class="form-check-input" type="checkbox" ${f.active ? 'checked' : ''} onchange="toggleFeed(${f.id}, 'active', this.checked)">
-        </div>
-      </td>
-      <td>
-        <div class="form-check form-switch mb-0">
-          <input class="form-check-input" type="checkbox" ${f.bypass_relevance ? 'checked' : ''} onchange="toggleFeed(${f.id}, 'bypass_relevance', this.checked)" title="When ON: all articles from this feed are included regardless of city relevance">
-        </div>
-      </td>
-      <td>
-        <button class="btn btn-sm btn-outline-primary me-1" onclick="editFeed(${f.id},'${f.name.replace(/'/g,"\\'")}','${f.url}',${f.bypass_relevance})"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-sm btn-outline-danger" onclick="deleteFeed(${f.id})"><i class="bi bi-trash"></i></button>
-      </td>
-    </tr>`).join('') :
-    '<tr><td colspan="4" class="empty-state"><i class="bi bi-rss"></i>No feeds yet. Add one above.</td></tr>';
+  feedsCache = await api('/panel/api/feeds');
+  $('feeds-table').innerHTML = feedsCache.length ? feedsCache.map(f => `<tr>
+      <td class="fw-medium">${esc(f.name)}</td>
+      <td><a href="${esc(f.url)}" target="_blank" rel="noopener" class="font-monospace small text-secondary text-decoration-none">${esc(f.url.length > 60 ? f.url.slice(0, 60) + '…' : f.url)}</a></td>
+      <td><div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" ${f.active ? 'checked' : ''} onchange="toggleFeed(${f.id}, 'active', this.checked)"></div></td>
+      <td><div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" ${f.bypass_relevance ? 'checked' : ''} onchange="toggleFeed(${f.id}, 'bypass_relevance', this.checked)" title="On: every article from this feed is used, without the city relevance filter"></div></td>
+      <td class="text-end text-nowrap"><button class="btn btn-sm btn-light-b" onclick="editFeed(${f.id})"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-light-b text-danger" onclick="deleteFeed(${f.id})"><i class="bi bi-trash"></i></button></td></tr>`).join('')
+    : empty(5, 'rss', 'No global feeds yet');
+  const have = new Set(feedsCache.map(f => f.url));
+  $('quick-add').innerHTML = QUICK.map(([group, items]) => `<div class="quick-group"><div class="gl">${esc(group)}</div>${items.map(([name, url, all, short], i) =>
+    have.has(url) ? `<span class="quick-btn" style="opacity:.5"><i class="bi bi-check2 me-1"></i>${esc(short || name)}</span>`
+      : `<button class="quick-btn ${all ? 'all' : ''}" data-q="${esc(JSON.stringify([name, url, all]))}" onclick="quickAdd(this)">${all ? '<i class="bi bi-check2-all me-1"></i>' : '<i class="bi bi-plus me-1"></i>'}${esc(short || name)}</button>`).join('')}</div>`).join('');
 }
 
-function openFeedModal(id = '', name = '', url = '', bypass = 0) {
-  document.getElementById('feed-id').value = id;
-  document.getElementById('feed-name').value = name;
-  document.getElementById('feed-url').value = url;
-  document.getElementById('feed-bypass').checked = !!bypass;
-  new bootstrap.Modal(document.getElementById('feed-modal')).show();
+function openFeedModal(f = null) {
+  $('feed-id').value = f?.id || ''; $('feed-name').value = f?.name || ''; $('feed-url').value = f?.url || ''; $('feed-bypass').checked = !!f?.bypass_relevance;
+  bootstrap.Modal.getOrCreateInstance($('feed-modal')).show();
 }
-
-function editFeed(id, name, url, bypass) { openFeedModal(id, name, url, bypass); }
-
+function editFeed(id) { openFeedModal(feedsCache.find(f => f.id === id)); }
 async function saveFeed() {
-  const id = document.getElementById('feed-id').value;
-  const name = document.getElementById('feed-name').value.trim();
-  const url = document.getElementById('feed-url').value.trim();
-  const bypass = document.getElementById('feed-bypass').checked ? 1 : 0;
+  const id = $('feed-id').value, name = $('feed-name').value.trim(), url = $('feed-url').value.trim();
   if (!url) { toast('URL is required', 'error'); return; }
-  const method = id ? 'PUT' : 'POST';
-  const endpoint = id ? `/panel/api/feeds/${id}` : '/panel/api/feeds';
-  const res = await api(endpoint, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name: name || url, url, bypass_relevance: bypass }) });
+  const res = await api(id ? `/panel/api/feeds/${id}` : '/panel/api/feeds', jsonOpts(id ? 'PUT' : 'POST', { name: name || url, url, bypass_relevance: $('feed-bypass').checked ? 1 : 0 }));
   if (res.error) { toast('Error: ' + res.error, 'error'); return; }
-  bootstrap.Modal.getInstance(document.getElementById('feed-modal')).hide();
-  toast(id ? 'Feed updated' : 'Feed added');
+  bootstrap.Modal.getInstance($('feed-modal')).hide();
+  toast(id ? 'Feed saved' : 'Feed added');
   loadFeeds();
 }
-
 async function deleteFeed(id) {
   if (!confirm('Remove this feed?')) return;
   await api(`/panel/api/feeds/${id}`, { method: 'DELETE' });
-  toast('Feed removed');
-  loadFeeds();
+  toast('Feed removed'); loadFeeds();
 }
-
-async function toggleFeed(id, field, val) {
-  await api(`/panel/api/feeds/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ [field]: val ? 1 : 0 }) });
-}
-
-async function quickAdd(name, url, bypass = 0) {
-  const res = await api('/panel/api/feeds', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, url, bypass_relevance: bypass }) });
+async function toggleFeed(id, field, val) { await api(`/panel/api/feeds/${id}`, jsonOpts('PUT', { [field]: val ? 1 : 0 })); }
+async function quickAdd(btn) {
+  const [name, url, all] = JSON.parse(btn.dataset.q);
+  const res = await api('/panel/api/feeds', jsonOpts('POST', { name, url, bypass_relevance: all }));
   if (res.error) { toast('Already added or error: ' + res.error, 'error'); return; }
-  toast(`${name} added`);
-  loadFeeds();
+  toast(`${name} added`); loadFeeds();
 }
 
-async function saveAppSetting(key, value) {
-  await api('/panel/api/settings/app', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ [key]: value ? '1' : '0' }) });
-  toast(key === 'use_google_news' ? (value ? 'Google News enabled' : 'Google News disabled') : 'Setting saved');
-}
-
-// Init
-loadDashboard();
+// ── Start ─────────────────────────────────────────────────────────────────────
+loadSideBots().then(route);
 </script>
 </body>
 </html>

@@ -152,8 +152,17 @@ def test_bot_page_reports_and_run_trace(monkeypatch):
 
     client = create_app().test_client()
     page = client.get(f"/panel/bot/{bot_id}")
-    assert page.status_code == 200 and b"Run now" in page.data
-    assert client.get("/panel/bot/999").status_code == 404
+    assert page.status_code == 302 and page.headers["Location"].endswith(f"/panel/#/bots/{bot_id}")
+    panel = client.get("/panel/")
+    assert panel.status_code == 200 and b"view-bot" in panel.data
+
+    ov = client.get("/panel/api/overview?days=14").get_json()
+    [ob] = [b for b in ov["bots"] if b["id"] == bot_id]
+    assert ob["channel"] == "LangsameNachrichten" and ob["subscribers"] == 5
+    assert "secret-token" not in str(ov) and ov["ai"]["requests"] == 1
+    assert [r["bot_id"] for r in client.get(f"/panel/api/runs?bot_id={bot_id}").get_json()] == [bot_id]
+    recent = client.get("/panel/api/posts/recent?limit=10").get_json()
+    assert all("bot_name" in p for p in recent)
 
     data = client.get(f"/panel/api/bots/{bot_id}/report?days=30").get_json()
     assert data["channel"] == "LangsameNachrichten"

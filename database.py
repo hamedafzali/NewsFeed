@@ -623,27 +623,90 @@ def bot_report(bot_id: int, days: int = 7) -> Dict[str, Any]:
             "daily_ai": daily_ai, "models": models}
 
 
-def bot_post_list(bot_id: int, limit: int = 30) -> List[Dict[str, Any]]:
-    """Recent posts with their Üben taps and reaction totals."""
+def bot_post_list(bot_id: Optional[int] = None, limit: int = 30) -> List[Dict[str, Any]]:
+    """Recent posts (of one bot, or all) with their Üben taps and reaction totals."""
+    where, args = ("WHERE p.bot_id = ?", (bot_id, limit)) if bot_id is not None else ("", (limit,))
     with _conn() as c:
-        rows = c.execute("""SELECT p.id, p.posted_at, p.title, p.url, p.posted, p.error, p.message_id, p.lesson_id,
-                                   o.opens, r.total AS reactions, r.reactions AS reaction_detail
-                            FROM posts p
-                            LEFT JOIN lesson_opens o ON o.lesson_id = p.lesson_id
-                            LEFT JOIN bots b ON b.id = p.bot_id
-                            LEFT JOIN post_reactions r ON r.message_id = p.message_id
-                                 AND r.chat_id = CAST(b.telegram_chat_id AS TEXT)
-                            WHERE p.bot_id = ? ORDER BY p.posted_at DESC, p.id DESC LIMIT ?""",
-                         (bot_id, limit)).fetchall()
+        rows = c.execute(f"""SELECT p.id, p.bot_id, b.name AS bot_name, p.posted_at, p.title, p.url, p.posted,
+                                    p.error, p.message_id, p.lesson_id, o.opens, r.total AS reactions,
+                                    r.reactions AS reaction_detail
+                             FROM posts p
+                             LEFT JOIN lesson_opens o ON o.lesson_id = p.lesson_id
+                             LEFT JOIN bots b ON b.id = p.bot_id
+                             LEFT JOIN post_reactions r ON r.message_id = p.message_id
+                                  AND r.chat_id = CAST(b.telegram_chat_id AS TEXT)
+                             {where} ORDER BY p.posted_at DESC, p.id DESC LIMIT ?""", args).fetchall()
         return [dict(r) for r in rows]
 
 
-def get_runs(bot_id: int, limit: int = 40) -> List[Dict[str, Any]]:
+def get_runs(bot_id: Optional[int] = None, limit: int = 40) -> List[Dict[str, Any]]:
+    """Recent runs (of one bot, or all) with the bot's name and how many AI requests each made."""
+    where, args = ("WHERE r.bot_id = ?", (bot_id, limit)) if bot_id is not None else ("", (limit,))
     with _conn() as c:
-        rows = c.execute("""SELECT r.*, (SELECT COUNT(*) FROM llm_calls l WHERE l.run_id = r.id) AS ai_calls
-                            FROM runs r WHERE r.bot_id = ? ORDER BY r.id DESC LIMIT ?""",
-                         (bot_id, limit)).fetchall()
+        rows = c.execute(f"""SELECT r.*, b.name AS bot_name,
+                                    (SELECT COUNT(*) FROM llm_calls l WHERE l.run_id = r.id) AS ai_calls
+                             FROM runs r LEFT JOIN bots b ON b.id = r.bot_id
+                             {where} ORDER BY r.id DESC LIMIT ?""", args).fetchall()
         return [dict(r) for r in rows]
+
+
+def overview(days: int = 14) -> Dict[str, Any]:
+    """Everything the panel's overview shows: one line per bot, totals, and per-day series."""
+    since = f"-{int(days)} days"
+    with _conn() as c:
+        def one(sql, *args):
+            row = c.execute(sql, args).fetchone()
+            return dict(row) if row else {}
+
+        def many(sql, *args):
+            return [dict(r) for r in c.execute(sql, args).fetchall()]
+
+        bots = []
+        for b in many("SELECT * FROM bots ORDER BY id"):
+            bid = b["id"]
+            subs = many("SELECT day, members FROM channel_stats WHERE bot_id = ? ORDER BY day DESC LIMIT 8", bid)
+            last_run = one("SELECT id, started_at, finished_at, status, error, posted FROM runs "
+                           "WHERE bot_id = ? ORDER BY id DESC LIMIT 1", bid)
+            bots.append({
+                "id": bid, "name": b["name"], "mode": b.get("mode") or "news", "level": b.get("level"),
+                "active": b["active"], "target_language": b.get("target_language"),
+                "max_posts_per_day": b.get("max_posts_per_day"),
+                "post_from_hour": b.get("post_from_hour"), "post_until_hour": b.get("post_until_hour"),
+                "run_every_minutes": b.get("run_every_minutes"), "telegram_chat_id": b.get("telegram_chat_id"),
+                "subscribers": subs[0]["members"] if subs else None,
+                "subscribers_week_ago": subs[-1]["members"] if len(subs) > 1 else None,
+                "posts_24h": one("SELECT COUNT(*) AS n FROM posts WHERE bot_id = ? AND posted = 1 "
+                                 "AND posted_at >= datetime('now', '-1 day')", bid)["n"],
+                "posts_period": one("SELECT COUNT(*) AS n FROM posts WHERE bot_id = ? AND posted = 1 "
+                                    "AND posted_at >= datetime('now', ?)", bid, since)["n"],
+                "last_post_at": one("SELECT MAX(posted_at) AS t FROM posts WHERE bot_id = ? AND posted = 1",
+                                    bid)["t"],
+                "last_run": last_run or None,
+                "failed_runs_24h": one("SELECT COUNT(*) AS n FROM runs WHERE bot_id = ? AND status = 'error' "
+                                       "AND started_at >= datetime('now', '-1 day')", bid)["n"],
+                "opens_period": one("""SELECT COALESCE(SUM(o.opens), 0) AS n FROM lesson_opens o
+                                       JOIN lessons l ON l.id = o.lesson_id
+                                       WHERE o.bot_id = ? AND l.created_at >= datetime('now', ?)""", bid, since)["n"],
+            })
+        ai = one("""SELECT COUNT(*) AS requests, COALESCE(SUM(status = 200), 0) AS ok,
+                           COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0) AS tokens
+                    FROM llm_calls WHERE ts >= datetime('now', ?)""", since)
+        ai_24h = one("""SELECT COUNT(*) AS requests, COALESCE(SUM(status = 200), 0) AS ok
+                        FROM llm_calls WHERE ts >= datetime('now', '-1 day')""")
+        daily_posts = many("""SELECT DATE(posted_at) AS day, bot_id, COUNT(*) AS sent FROM posts
+                              WHERE posted = 1 AND posted_at >= datetime('now', ?)
+                              GROUP BY day, bot_id ORDER BY day""", since)
+        daily_ai = many("""SELECT DATE(ts) AS day, provider, COUNT(*) AS requests, SUM(status = 200) AS ok
+                           FROM llm_calls WHERE ts >= datetime('now', ?)
+                           GROUP BY day, provider ORDER BY day""", since)
+        providers = many("""SELECT provider, COUNT(*) AS requests, SUM(status = 200) AS ok,
+                                   CAST(AVG(CASE WHEN status = 200 THEN duration_ms END) AS INTEGER) AS avg_ms
+                            FROM llm_calls WHERE ts >= datetime('now', ?)
+                            GROUP BY provider ORDER BY requests DESC""", since)
+        runs_24h = one("""SELECT COUNT(*) AS runs, COALESCE(SUM(status = 'error'), 0) AS failed
+                          FROM runs WHERE started_at >= datetime('now', '-1 day')""")
+    return {"days": days, "bots": bots, "ai": ai, "ai_24h": ai_24h, "runs_24h": runs_24h,
+            "daily_posts": daily_posts, "daily_ai": daily_ai, "providers": providers}
 
 
 def get_run(run_id: int) -> Optional[Dict[str, Any]]:
