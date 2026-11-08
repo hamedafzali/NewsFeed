@@ -386,6 +386,19 @@ def test_learning_post_has_no_cover_without_a_photo(monkeypatch):
 
 
 @pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="needs ffmpeg")
+def test_still_video_is_a_playable_mp4(tmp_path):
+    import subprocess
+    from news_platform.learning import video
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=641x361", "-frames:v", "1",
+                    str(tmp_path / "i.jpg")], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=3", "-b:a", "48k",
+                    str(tmp_path / "a.mp3")], check=True)
+    clip = video.still_video((tmp_path / "i.jpg").read_bytes(), (tmp_path / "a.mp3").read_bytes())
+    assert clip and clip.data[4:8] == b"ftyp"
+    assert (clip.width, clip.height) == (640, 360) and clip.duration == 3   # even size for phones
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="needs ffmpeg")
 def test_cover_is_a_small_square_jpeg(tmp_path):
     import subprocess
     from news_platform.learning import video
