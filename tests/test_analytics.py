@@ -73,7 +73,7 @@ def test_a_run_keeps_its_steps_and_the_post_link(monkeypatch):
     db.finish_run(run_id, result.status, result.processed, result.posted)
     assert result.posted == 1
     steps = [r["step"] for r in _rows("SELECT step FROM run_steps WHERE run_id = ? ORDER BY id", run_id)]
-    assert steps == ["fetch", "candidates", "article", "format", "sent"]
+    assert steps == ["fetch", "plan", "candidates", "article", "text", "format", "sent"]
     [post] = _rows("SELECT message_id, lesson_id FROM posts")
     assert post["message_id"] == 77 and post["lesson_id"] == _rows("SELECT id FROM lessons")[0]["id"]
     assert _rows("SELECT status, posted FROM runs")[0] == {"status": "success", "posted": 1}

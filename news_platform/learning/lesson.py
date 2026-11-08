@@ -15,7 +15,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from news_platform.learning.grammar import GrammarTopic, find_topic, topics_for
-from news_platform.pipeline.llm import (LANGUAGE_NAMES, PERSIAN_CHARS, LlmUnavailable, MistralClient, make_client,
+from news_platform.pipeline.llm import (trace, LANGUAGE_NAMES, PERSIAN_CHARS, LlmUnavailable, MistralClient, make_client,
                                          tagged)
 
 LEVEL_GUIDE = {
@@ -121,26 +121,37 @@ class LessonWriter:
                     out = self.client.complete_json(messages, temperature=0.3, max_tokens=1500)
             except LlmUnavailable as exc:
                 self.logger.warning("lesson writer unavailable: %s", exc)
+                trace("gave up", f"No AI provider answered: {exc}")
                 return None
             if out.get("skip") is True:
+                trace("not news", "The AI judged the article not to be news")
                 return {"skip": True}
             # Some answers wrap everything in one key ({"lesson": {...}}).
             if "text" not in out and len(out) == 1 and isinstance(next(iter(out.values())), dict):
                 out = next(iter(out.values()))
             lesson, problem = self.check(out, language, explain_language, level)
             if lesson:
+                trace("validate", f"Lesson passed the checks: {lesson.get('title', '')}",
+                      {"title": lesson.get("title"), "text": lesson.get("text")})
                 errors = self.fact_check(text or title, lesson["text"], language)
                 if errors is None:
+                    trace("gave up", "The fact check could not be done")
                     return None
                 if not errors:
                     lesson["level"] = level
                     lesson["language"] = language
+                    trace("accepted", lesson.get("title", ""))
                     return lesson
                 problem = ("These statements in your text are wrong or not in the article: "
                            + " | ".join(errors) + ". Fix them in the text and the vocabulary.")
+                trace("correct", f"Asked the writer to fix {len(errors)} statement{'s' if len(errors) != 1 else ''}",
+                      {"errors": errors})
+            else:
+                trace("rejected", problem)
             self.logger.warning("lesson rejected (%s): %s %s", problem, out.get("title"), sorted(out)[:8])
             messages += [{"role": "assistant", "content": json.dumps(out, ensure_ascii=False)},
                          {"role": "user", "content": f"{problem} Reply with the corrected JSON."}]
+        trace("gave up", "No clean lesson after 3 tries")
         return None
 
     def fact_check(self, article: str, lesson_text: str, language: str) -> Optional[List[str]]:
@@ -171,6 +182,10 @@ class LessonWriter:
         kept = [e for e in errors if self._quotes_lesson(e, lesson_text)]
         if errors:
             self.logger.info("lesson fact check found: %s (kept %d)", errors, len(kept))
+        ignored = [e for e in errors if e not in kept]
+        trace("fact check",
+              f"{len(kept)} wrong statement{'s' if len(kept) != 1 else ''} found" if kept else "No wrong statements",
+              {"errors": kept[:6], "ignored": ignored} if errors else None)
         return kept[:6]
 
     @staticmethod

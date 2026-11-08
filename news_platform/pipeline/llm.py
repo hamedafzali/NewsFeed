@@ -55,6 +55,22 @@ def tagged(**tags):
         _tags.reset(token)
 
 
+# Decisions taken around the AI calls (output rejected, fact check findings, a correction
+# asked for, a provider skipped) go to the run trace through these listeners.
+trace_listeners: List[Callable[[Optional[int], str, str, Any], None]] = []
+
+
+def trace(step: str, summary: str = "", detail: Any = None) -> None:
+    run_id = _tags.get().get("run_id")
+    if run_id is None:
+        return
+    for listener in trace_listeners:
+        try:
+            listener(run_id, step, summary, detail)
+        except Exception:
+            logging.getLogger(__name__).exception("trace listener failed")
+
+
 def _report(provider: str, model: str, status: int, started: float, data: Any = None, error: str = None) -> None:
     if not usage_listeners:
         return
@@ -335,6 +351,7 @@ class ChainClient:
             except LlmUnavailable as exc:
                 problems.append(str(exc))
                 self.logger.warning("LLM provider failed, trying the next one: %s", exc)
+                trace("fallback", str(exc), {"provider": getattr(client, "name", "mistral")})
         raise LlmUnavailable("all LLM providers failed: " + "; ".join(problems) if problems else "no LLM provider has a key")
 
 
@@ -409,18 +426,23 @@ class PostWriter:
                     out = self.client.complete_json(messages, temperature=0.2)
             except LlmUnavailable as exc:
                 self.logger.warning("post writer unavailable: %s", exc)
+                trace("gave up", f"No AI provider answered: {exc}")
                 return None
             if out.get("skip") is True:
+                trace("not news", "The AI judged the article not to be news")
                 return {"skip": True}
             post = {key: str(out.get(key) or "").strip() for key in ("title", "summary", "summary_en")}
             problem = self._problem(post, target_language, target_name)
             if not problem:
+                trace("validate", "Post passed the checks")
                 return post
             self.logger.warning("post writer output rejected (%s): %s", problem, post["title"])
+            trace("rejected", problem)
             messages += [
                 {"role": "assistant", "content": json.dumps(out, ensure_ascii=False)},
                 {"role": "user", "content": f"{problem} Reply with the corrected JSON."},
             ]
+        trace("gave up", "No acceptable post after 3 tries")
         return None
 
     @staticmethod

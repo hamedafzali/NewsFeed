@@ -2,11 +2,12 @@
 Panel Blueprint — management dashboard API + UI.
 """
 import os
+import threading
 import time
 from flask import Blueprint, jsonify, request, render_template, current_app
 
 import database as db
-from processor import NewsProcessor, run_bot as run_bot_pipeline
+from processor import NewsProcessor, is_running, schedule_status, run_bot as run_bot_pipeline
 
 panel = Blueprint("panel", __name__, url_prefix="/panel")
 
@@ -100,23 +101,29 @@ def run_bot(bot_id):
     bot = db.get_bot(bot_id)
     if not bot:
         return jsonify({"error": "Not found"}), 404
-    if not bot.get("active"):
-        return jsonify({"error": "Bot is inactive"}), 400
+    # normal: obey the daily limit and spacing; force: post one now anyway;
+    # test: write one post and show it, send nothing.
+    mode = (request.get_json(silent=True) or {}).get("mode", "normal")
+    if mode not in ("normal", "force", "test"):
+        return jsonify({"error": "Unknown run mode"}), 400
+    if mode != "test" and not bot.get("active"):
+        return jsonify({"error": "The bot is paused; activate it first, or use a test run"}), 400
+    if is_running(bot_id):
+        return jsonify({"error": "This bot is already running"}), 409
 
-    start = time.time()
-    try:
-        result = run_bot_pipeline(bot)
-        return jsonify({
-            "status": result.status,
-            "fetched": result.processed,
-            "posted": result.posted,
-            "duration_ms": int((time.time() - start) * 1000),
-            "error": result.error_message,
-        })
-    except Exception as e:
-        duration_ms = int((time.time() - start) * 1000)
-        db.log_activity(bot["city_name"], f"bot:{bot_id}", 0, 0, duration_ms, str(e))
-        return jsonify({"error": str(e)}), 500
+    # The run row is made here so the panel can follow the run while it goes on.
+    run_id = db.start_run(bot_id, "test" if mode == "test" else "manual")
+
+    def work():
+        try:
+            run_bot_pipeline(bot, "manual", force=mode == "force", dry_run=mode == "test", run_id=run_id)
+        except Exception as exc:
+            current_logger.exception("manual run failed")
+            db.finish_run(run_id, "error", error=str(exc))
+
+    current_logger = current_app.logger
+    threading.Thread(target=work, name=f"run-bot-{bot_id}", daemon=True).start()
+    return jsonify({"run_id": run_id, "mode": mode}), 202
 
 
 @panel.route("/api/bots/<int:bot_id>/test", methods=["POST"])
@@ -253,6 +260,7 @@ def bot_report(bot_id):
     days = min(max(int(request.args.get("days", 7)), 1), 365)
     channel = _channel_username(bot_id)
     return jsonify({"bot": _public_bot(bot), "channel": channel, "report": db.bot_report(bot_id, days),
+                    "schedule": schedule_status(bot),
                     "posts": db.bot_post_list(bot_id, int(request.args.get("posts", 30)))})
 
 
@@ -269,6 +277,8 @@ def overview():
     data = db.overview(days)
     for bot in data["bots"]:
         bot["channel"] = _channel_username(bot["id"])
+        full = db.get_bot(bot["id"])
+        bot["schedule"] = schedule_status(full) if full else None
     return jsonify(data)
 
 

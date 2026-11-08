@@ -128,26 +128,79 @@
   .legend { display: flex; flex-wrap: wrap; gap: .35rem 1rem; font-size: .76rem; color: var(--text-2); margin-bottom: .5rem; }
 
   /* Trace drawer */
-  #trace { --bs-offcanvas-width: min(760px, 100vw); }
-  #trace .offcanvas-header { border-bottom: 1px solid var(--border); }
-  .tl { position: relative; padding-left: 1.6rem; }
-  .tl::before { content: ""; position: absolute; left: .55rem; top: .4rem; bottom: .4rem; width: 2px; background: var(--border); }
-  .tl-item { position: relative; margin-bottom: 1rem; }
-  .tl-icon { position: absolute; left: -1.6rem; top: 0; width: 1.3rem; height: 1.3rem; border-radius: 50%; display: grid; place-items: center;
-             font-size: .7rem; background: #e2e8f0; color: var(--text-2); box-shadow: 0 0 0 3px var(--surface); }
-  .tl-item.ai .tl-icon { background: var(--primary-soft); color: var(--primary); }
-  .tl-item.ok .tl-icon { background: #dcfce7; color: var(--good-text); }
-  .tl-item.bad .tl-icon { background: #fee2e2; color: var(--bad-text); }
-  .tl-item.skip .tl-icon { background: #fef3c7; color: var(--warn-text); }
-  .tl-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
-  .tl-head b { font-weight: 600; }
-  .tl-time { margin-left: auto; color: var(--faint); font-size: .72rem; font-variant-numeric: tabular-nums; }
-  .tl-body { color: var(--text-2); font-size: .84rem; margin-top: .15rem; }
-  details > summary { cursor: pointer; color: var(--primary); font-size: .78rem; font-weight: 500; margin-top: .3rem; list-style: none; }
+  #trace { --bs-offcanvas-width: min(940px, 100vw); }
+  #trace .offcanvas-header { border-bottom: 1px solid var(--border); align-items: flex-start; }
+  .live { display: inline-flex; align-items: center; gap: .35rem; font-size: .72rem; font-weight: 600; color: var(--primary); }
+  .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+
+  /* Pipeline strip */
+  .pipe { display: flex; align-items: stretch; gap: 0; margin-bottom: 1rem; overflow-x: auto; }
+  .stage { flex: 1 1 0; min-width: 112px; border: 1px solid var(--border); border-radius: 10px; padding: .55rem .7rem; background: var(--surface); position: relative; }
+  .stage + .stage { margin-left: 18px; }
+  .stage + .stage::before { content: ""; position: absolute; left: -15px; top: 50%; width: 12px; height: 2px; background: var(--border-strong); }
+  .stage + .stage::after { content: ""; position: absolute; left: -6px; top: calc(50% - 4px); border: 4px solid transparent; border-left-color: var(--border-strong); }
+  .stage .st-h { display: flex; align-items: center; gap: .35rem; font-size: .72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stage .st-v { font-size: .84rem; font-weight: 600; margin-top: .2rem; line-height: 1.25; }
+  .stage .st-s { font-size: .72rem; color: var(--muted); margin-top: .1rem; }
+  .stage.done { border-color: #c6f0d4; } .stage.done .st-h i { color: var(--good); }
+  .stage.warn { border-color: #fbe3a6; background: #fffcf2; } .stage.warn .st-h i { color: var(--warn); }
+  .stage.fail { border-color: #fbd0d0; background: #fff8f8; } .stage.fail .st-h i { color: var(--bad); }
+  .stage.idle { opacity: .55; border-style: dashed; }
+  .stage.active { border-color: #c7d2fe; box-shadow: 0 0 0 3px var(--primary-soft); } .stage.active .st-h i { color: var(--primary); }
+
+  .why { display: flex; gap: .65rem; align-items: flex-start; border-radius: 10px; padding: .7rem .85rem; margin-bottom: 1rem; font-size: .84rem; }
+  .why i { font-size: 1rem; margin-top: .05rem; }
+  .why.info { background: var(--primary-soft); color: #312e81; }
+  .why.warn { background: #fff8e6; color: #7a4d06; }
+  .why.bad { background: #fef2f2; color: #8f1d1d; }
+  .why.good { background: #ecfdf3; color: #065f2c; }
+
+  /* Span groups (one per article) */
+  .grp { border: 1px solid var(--border); border-radius: 12px; margin-bottom: .85rem; background: var(--surface); overflow: hidden; }
+  .grp-h { display: flex; align-items: center; gap: .6rem; padding: .6rem .85rem; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+  .grp-h .gt { font-weight: 600; font-size: .86rem; min-width: 0; flex: 1; }
+  .grp-h .gt .sub { font-weight: 400; color: var(--muted); font-size: .75rem; }
+  .span { display: grid; grid-template-columns: 22px minmax(0, 1fr) 150px 58px; gap: .6rem; align-items: start; padding: .5rem .85rem; border-top: 1px solid #f1f2f4; }
+  .span:first-of-type { border-top: 0; }
+  .span .ic { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: .72rem; background: #eef0f3; color: var(--text-2); }
+  .span.ai .ic { background: var(--primary-soft); color: var(--primary); }
+  .span.ok .ic { background: #dcfce7; color: var(--good-text); }
+  .span.bad .ic { background: #fee2e2; color: var(--bad-text); }
+  .span.warn .ic { background: #fef3c7; color: var(--warn-text); }
+  .span .lbl { font-weight: 600; font-size: .83rem; }
+  .span .lbl .tag { font-weight: 500; color: var(--muted); margin-left: .35rem; font-size: .76rem; }
+  .span .txt { color: var(--text-2); font-size: .8rem; margin-top: .1rem; overflow-wrap: anywhere; }
+  .verdict { display: inline-flex; align-items: center; gap: .3rem; font-size: .76rem; font-weight: 600; margin-top: .25rem; }
+  .verdict.ok { color: var(--good-text); } .verdict.bad { color: var(--bad-text); } .verdict.warn { color: var(--warn-text); }
+  .issues { margin: .35rem 0 0; padding: 0; list-style: none; }
+  .issues li { font-size: .78rem; padding: .3rem .5rem; border-left: 3px solid var(--bad); background: #fef6f6; border-radius: 0 6px 6px 0; margin-bottom: .25rem; }
+  .issues li .arrow { color: var(--muted); margin: 0 .3rem; }
+  .issues.ignored li { border-left-color: var(--border-strong); background: var(--surface-2); color: var(--muted); }
+  .track { position: relative; height: 8px; background: #f1f3f5; border-radius: 4px; margin-top: .45rem; }
+  .track .bar { position: absolute; top: 0; height: 8px; border-radius: 4px; min-width: 3px; background: var(--faint); }
+  .track .bar.ai { background: var(--primary); } .track .bar.bad { background: var(--bad); }
+  .track .tick { position: absolute; top: -2px; width: 2px; height: 12px; background: var(--faint); border-radius: 1px; }
+  .span .dur { text-align: right; font-size: .74rem; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: .2rem; }
+  .post-preview { white-space: pre-wrap; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: .6rem .75rem; font-size: .82rem; margin-top: .4rem; }
+  details > summary { cursor: pointer; color: var(--primary); font-size: .76rem; font-weight: 500; margin-top: .3rem; list-style: none; }
   details > summary::before { content: "▸ "; } details[open] > summary::before { content: "▾ "; }
-  pre.code { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: .7rem .85rem; font-size: .74rem; max-height: 440px;
+  pre.code { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: .7rem .85rem; font-size: .74rem; max-height: 420px;
              overflow: auto; white-space: pre-wrap; word-break: break-word; margin: .4rem 0 0; }
   .mini-table td, .mini-table th { padding: .35rem .5rem !important; font-size: .78rem; }
+  @media (max-width: 700px) { .span { grid-template-columns: 22px minmax(0, 1fr) 52px; } .span .tl-bar { display: none; } }
+
+  /* Run dialog */
+  .run-opt { display: flex; gap: .8rem; border: 1px solid var(--border-strong); border-radius: 10px; padding: .8rem .9rem; cursor: pointer; margin-bottom: .6rem; }
+  .run-opt:hover { border-color: var(--primary); }
+  .run-opt input { margin-top: .2rem; }
+  .run-opt .t { font-weight: 600; font-size: .88rem; }
+  .run-opt .d { color: var(--muted); font-size: .8rem; }
+  .run-opt:has(input:checked) { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+  .sched { display: flex; flex-wrap: wrap; gap: .5rem 1.6rem; margin-top: .9rem; padding-top: .8rem; border-top: 1px solid var(--border); }
+  .sched .k { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .sched .v { font-size: .85rem; font-weight: 600; }
+  .sched .v small { font-weight: 400; color: var(--muted); }
 
   /* Feeds / preview */
   .article-card { border: 1px solid var(--border); border-radius: 10px; padding: .9rem 1rem; margin-bottom: .6rem; background: var(--surface); }
@@ -206,7 +259,7 @@
       <div class="panel mb-3">
         <div class="panel-head"><h6>Bots</h6><span class="hint">click a bot for its full report</span></div>
         <div class="table-responsive"><table class="table table-hover">
-          <thead><tr><th>Bot</th><th>Status</th><th class="num">Subscribers</th><th class="num">Posts 24h</th><th>Last post</th><th>Last run</th><th class="num" id="ov-opens-h">Üben taps</th></tr></thead>
+          <thead><tr><th>Bot</th><th>Status</th><th class="num">Subscribers</th><th class="num">Posts 24h</th><th>Last post</th><th>Last run</th><th>Next post</th><th class="num" id="ov-opens-h">Üben taps</th></tr></thead>
           <tbody id="ov-bots"></tbody>
         </table></div>
       </div>
@@ -347,6 +400,26 @@
     <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
   </div>
   <div class="offcanvas-body" id="trace-body"></div>
+</div>
+
+<!-- Run dialog -->
+<div class="modal fade" id="run-modal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title fw-semibold" id="run-modal-title">Run</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <div id="run-status"></div>
+      <div id="run-paused" class="why info mb-3 d-none"><i class="bi bi-pause-circle"></i><div>The bot is paused. Only a test run is possible; activate it in <b>Edit</b> to post.</div></div>
+      <label class="run-opt"><input class="form-check-input" type="radio" name="run-mode" id="run-normal" value="normal">
+        <div><div class="t">Normal run</div><div class="d">Same as the schedule: follows the daily limit and the spacing between posts.</div></div></label>
+      <label class="run-opt"><input class="form-check-input" type="radio" name="run-mode" id="run-force" value="force">
+        <div><div class="t">Post now</div><div class="d">Writes and posts one article to the channel right away, ignoring the daily limit and spacing. It counts toward today's posts.</div></div></label>
+      <label class="run-opt"><input class="form-check-input" type="radio" name="run-mode" id="run-test" value="test">
+        <div><div class="t">Test run</div><div class="d">Does everything (fetch, AI writing, fact check) and shows the post it would send. Nothing is posted; it uses AI requests.</div></div></label>
+      <div class="small-muted">You can follow every step live while it runs.</div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-light-b" data-bs-dismiss="modal">Cancel</button>
+      <button type="button" class="btn btn-primary" id="run-start"><i class="bi bi-play-fill me-1"></i>Start</button></div>
+  </div></div>
 </div>
 
 <!-- Bot modal -->
@@ -592,8 +665,9 @@ async function showOverview() {
       <td class="num">${num(b.posts_24h)}${b.max_posts_per_day ? `<span class="small-muted"> / ${b.max_posts_per_day}</span>` : ''}</td>
       <td>${b.last_post_at ? `${ago(b.last_post_at)}<div class="small-muted">${fmtTime(b.last_post_at)}</div>` : '<span class="small-muted">never</span>'}</td>
       <td>${runPill(b.last_run)}${b.last_run ? `<div class="small-muted mt-1">${ago(b.last_run.started_at)}</div>` : ''}</td>
+      <td>${b.active ? scheduleLine(b.schedule, b) : '<span class="small-muted">paused</span>'}</td>
       ${learning ? `<td class="num">${b.mode === 'learning' ? num(b.opens_period) : ''}</td>` : ''}</tr>`).join('')
-    : empty(7, 'robot', 'No bots yet. <a href="#/bots">Add one</a>.');
+    : empty(8, 'robot', 'No bots yet. <a href="#/bots">Add one</a>.');
 
   // Posts per day, one colour per bot (colour follows the bot, not its rank).
   const labels = dayRange(state.days);
@@ -675,7 +749,7 @@ async function showBot() {
           <span class="chip"><i class="bi bi-clock"></i>${hours(b)} Berlin</span>
           <span class="chip"><i class="bi bi-arrow-repeat"></i>checks every ${b.run_every_minutes || 60} min</span>
         </div>
-      </div></div>`;
+      </div></div>${schedStrip(data.schedule, b)}`;
 
   const subs = r.subscribers, last = subs.length ? subs[subs.length - 1].members : null;
   const okRate = r.ai.requests ? Math.round(100 * r.ai.ok / r.ai.requests) : null;
@@ -746,78 +820,240 @@ function renderRunRows(target, runs, { compact = false, showBot = true } = {}) {
     const bot = `<td class="text-nowrap"><span class="swatch" style="background:${botColor(r.bot_id)}"></span>${esc(r.bot_name || '#' + r.bot_id)}</td>`;
     if (compact) return `<tr class="clickable" onclick="openRun(${r.id})"><td class="text-nowrap">${fmtTime(r.started_at)}<div class="small-muted">${ago(r.started_at)}</div></td>${bot}<td>${runPill(r)}</td><td class="num">${num(r.ai_calls)}</td><td class="num">${fmtMs(dur)}</td></tr>`;
     return `<tr class="clickable" onclick="openRun(${r.id})"><td class="text-nowrap">${fmtTime(r.started_at)}<div class="small-muted">${ago(r.started_at)}</div></td>
-      ${showBot ? bot : ''}<td><span class="pill pill-mute">${r.trigger === 'manual' ? '<i class="bi bi-hand-index"></i>manual' : '<i class="bi bi-clock"></i>schedule'}</span></td>
+      ${showBot ? bot : ''}<td><span class="pill ${r.trigger === 'test' ? 'pill-info' : 'pill-mute'}">${trigLabel(r.trigger)}</span></td>
       <td>${runPill(r)}</td><td class="num">${num(r.fetched)}</td><td class="num">${num(r.posted)}</td><td class="num">${num(r.ai_calls)}</td>
       <td class="num">${fmtMs(dur)}</td><td class="small text-danger" style="max-width:280px">${esc(r.error || '')}</td></tr>`;
   }).join('') : empty(cols, 'diagram-3', 'No runs recorded yet');
 }
 
 // ── Run trace ─────────────────────────────────────────────────────────────────
-const STEP = {
-  fetch: ['Fetched feeds', 'cloud-download'], candidates: ['Ranked candidate articles', 'list-ol'], article: ['Trying article', 'file-earmark-text'],
-  skip: ['Skipped', 'skip-forward'], format: ['Built the post', 'layout-text-window'], sent: ['Posted to Telegram', 'send-check'], 'send failed': ['Sending failed', 'x-octagon'],
-};
-const STEP_CLASS = { sent: 'ok', 'send failed': 'bad', skip: 'skip' };
+// A run is shown like a CI job: a strip of pipeline stages, the reason behind the posting
+// decision, then one group per article tried, with every draft, check, fact check,
+// correction and send as a row on a shared time axis.
 const PURPOSE_LABEL = { lesson: 'Write the lesson', check: 'Fact-check the lesson', post: 'Write the post' };
+const VERDICT_STEPS = new Set(['validate', 'rejected', 'not news']);
 const pretty = t => { try { return JSON.stringify(JSON.parse(t), null, 2); } catch (e) { return t; } };
+const parse = t => { try { return JSON.parse(t); } catch (e) { return null; } };
+const trigLabel = t => t === 'test' ? '<i class="bi bi-eyedropper"></i>test run' : t === 'manual' ? '<i class="bi bi-hand-index"></i>manual' : '<i class="bi bi-clock"></i>schedule';
+let traceTimer = null, traceSig = '', traceWasLive = false;
 
-function stepDetail(item) {
-  if (!item.detail) return '';
-  let data = null;
-  try { data = JSON.parse(item.detail); } catch (e) {}
-  if (item.step === 'candidates' && Array.isArray(data)) {
-    return `<details><summary>Show ${data.length} articles</summary><div class="table-responsive"><table class="table mini-table mt-1">
-      <thead><tr><th>Title</th><th>Source</th><th class="num">Relevance</th></tr></thead><tbody>${data.map(a => `<tr>
-      <td><a href="${esc(a.url)}" target="_blank" rel="noopener" ${hasRtl(a.title) ? 'dir="rtl"' : ''}>${esc(a.title)}</a></td><td>${esc(a.source)}</td>
-      <td class="num">${a.relevance == null ? '' : Number(a.relevance).toFixed(2)}</td></tr>`).join('')}</tbody></table></div></details>`;
+function groupTimeline(items) {
+  const prep = [], articles = [];
+  let cur = null;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.type === 'step' && it.step === 'article') { cur = { head: it, rows: [] }; articles.push(cur); continue; }
+    // An AI answer and the verdict on it read as one row.
+    if (it.type === 'ai') {
+      const next = items[i + 1];
+      if (next && next.type === 'step' && ((it.purpose === 'check' && next.step === 'fact check') || (it.purpose !== 'check' && VERDICT_STEPS.has(next.step)))) {
+        it.verdict = next; i++;
+      }
+    }
+    (cur ? cur.rows : prep).push(it);
   }
-  if (data && data.url && Object.keys(data).length <= 4) {
-    const extra = Object.entries(data).filter(([k, v]) => k !== 'url' && v != null).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join(' · ');
-    return `<div class="small text-truncate"><a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url)}</a></div>${extra ? `<div class="small-muted">${extra}</div>` : ''}`;
-  }
-  return `<details><summary>Details</summary><pre class="code">${esc(pretty(item.detail))}</pre></details>`;
+  return { prep, articles };
 }
 
-function traceItem(item) {
-  if (item.type === 'ai') {
-    const ok = item.status === 200;
-    const tokens = item.prompt_tokens != null ? ` · ${num(item.prompt_tokens)} → ${num(item.completion_tokens)} tokens` : '';
-    return `<div class="tl-item ai ${ok ? '' : 'bad'}"><div class="tl-icon"><i class="bi bi-stars"></i></div>
-      <div class="tl-head"><b>AI · ${esc(PURPOSE_LABEL[item.purpose] || 'request')}</b>
-        ${ok ? '' : `<span class="pill pill-bad">${item.status ? 'HTTP ' + item.status : 'no answer'}</span>`}<span class="tl-time">${fmtClock(item.ts)}</span></div>
-      <div class="tl-body">${esc(item.provider)} · <span class="font-monospace small">${esc(item.model)}</span> · ${fmtMs(item.duration_ms)}${tokens}</div>
-      ${item.error ? `<div class="small text-danger mt-1">${esc(item.error)}</div>` : ''}
-      ${item.response ? `<details${ok ? '' : ' open'}><summary>AI answer</summary><pre class="code" dir="auto">${esc(pretty(item.response))}</pre></details>` : ''}</div>`;
-  }
-  const [label, icon] = STEP[item.step] || [item.step, 'dot'];
-  return `<div class="tl-item ${STEP_CLASS[item.step] || ''}"><div class="tl-icon"><i class="bi bi-${icon}"></i></div>
-    <div class="tl-head"><b>${esc(label)}</b><span class="tl-time">${fmtClock(item.ts)}</span></div>
-    ${item.summary ? `<div class="tl-body" ${hasRtl(item.summary) ? 'dir="auto"' : ''}>${esc(item.summary)}</div>` : ''}
-    ${stepDetail(item)}</div>`;
+function articleOutcome(g) {
+  const last = [...g.rows].reverse().find(r => r.type === 'step' && ['sent', 'send failed', 'skip', 'preview'].includes(r.step));
+  if (!last) return ['pill-info', 'in progress'];
+  if (last.step === 'sent') return ['pill-good', 'posted'];
+  if (last.step === 'preview') return ['pill-info', 'preview · not sent'];
+  if (last.step === 'skip') return ['pill-warn', 'skipped'];
+  return ['pill-bad', 'send failed'];
 }
 
+function stages(run, groups, learning) {
+  const all = groups.articles.flatMap(g => g.rows);
+  const find = s => groups.prep.concat(all).filter(r => r.type === 'step' && r.step === s);
+  const fetch = find('fetch')[0], cand = find('candidates')[0], plan = find('plan')[0];
+  const drafts = all.filter(r => r.type === 'ai' && r.purpose !== 'check');
+  const rejected = all.filter(r => (r.verdict || {}).step === 'rejected').length;
+  const checks = all.filter(r => r.type === 'ai' && r.purpose === 'check');
+  const fixes = all.filter(r => r.type === 'step' && r.step === 'correct').length;
+  const sent = find('sent'), failed = find('send failed'), preview = find('preview');
+  const live = !run.finished_at;
+  const planData = plan ? parse(plan.detail) : null;
+  const mayPost = !planData || planData.may_post > 0;
+  const tried = groups.articles.length;
+  const st = (cls, icon, name, value, sub) => `<div class="stage ${cls}"><div class="st-h"><i class="bi bi-${icon}"></i>${name}</div><div class="st-v">${value}</div><div class="st-s">${sub || '&nbsp;'}</div></div>`;
+  const out = [
+    st(fetch ? 'done' : live ? 'active' : 'fail', 'cloud-download', 'Fetch', fetch ? `${num(run.fetched || parseInt(fetch.summary))} articles` : '—', fetch ? 'from the feeds' : ''),
+    st(cand ? (mayPost ? 'done' : 'warn') : fetch && live ? 'active' : 'idle', 'funnel', 'Choose', cand ? `${parseInt(cand.summary) || 0} candidates` : '—', cand ? (mayPost ? `${tried} tried` : 'may not post now') : ''),
+    st(!tried ? 'idle' : 'done', 'file-earmark-text', 'Read', tried ? `${tried} article${tried > 1 ? 's' : ''}` : '—', find('text').length ? 'full text' : ''),
+    st(!drafts.length ? (tried && live ? 'active' : 'idle') : drafts.some(d => d.verdict && d.verdict.step === 'validate') ? (rejected ? 'warn' : 'done') : live ? 'active' : 'fail',
+       'stars', 'Write', drafts.length ? `${drafts.length} draft${drafts.length > 1 ? 's' : ''}` : '—', drafts.length ? (rejected ? `${rejected} rejected by checks` : 'passed checks') : ''),
+  ];
+  if (learning) out.push(st(!checks.length ? 'idle' : fixes ? (find('accepted').length ? 'warn' : 'fail') : 'done', 'patch-check', 'Fact check',
+    checks.length ? `${checks.length} check${checks.length > 1 ? 's' : ''}` : '—', checks.length ? (fixes ? `${fixes} correction${fixes > 1 ? 's' : ''} asked` : 'no errors') : ''));
+  out.push(st(sent.length ? 'done' : preview.length ? 'done' : failed.length ? 'fail' : live && drafts.length ? 'active' : 'idle',
+    preview.length ? 'eye' : 'send', preview.length ? 'Preview' : 'Publish',
+    sent.length ? `${sent.length} posted` : preview.length ? 'not sent' : failed.length ? 'failed' : '—', sent.length ? 'to the channel' : preview.length ? 'test run' : ''));
+  return `<div class="pipe">${out.join('')}</div>`;
+}
+
+function whyBanner(run, groups) {
+  const plan = groups.prep.find(r => r.type === 'step' && r.step === 'plan');
+  const data = plan ? parse(plan.detail) : null;
+  if (run.error) return `<div class="why bad"><i class="bi bi-x-octagon"></i><div><b>The run failed.</b> ${esc(run.error)}</div></div>`;
+  if (!plan) return '';
+  if (data && data.may_post === 0) {
+    const when = data.next_post_at ? ` Next post allowed <b>${fmtTime(data.next_post_at)}</b> (${ago2(data.next_post_at)}).` : '';
+    return `<div class="why warn"><i class="bi bi-hourglass-split"></i><div><b>Nothing was posted on purpose.</b> ${esc(plan.summary)}.${when}
+      <div class="small mt-1">To post anyway, use <b>Run now → Post now</b>.</div></div></div>`;
+  }
+  const sent = run.posted, tried = groups.articles.length;
+  if (run.finished_at && !sent && tried && !groups.articles.some(g => g.rows.some(r => r.step === 'preview')))
+    return `<div class="why warn"><i class="bi bi-exclamation-triangle"></i><div><b>${tried} article${tried > 1 ? 's were' : ' was'} tried, none posted.</b> See below why each one was skipped.</div></div>`;
+  return `<div class="why info"><i class="bi bi-info-circle"></i><div>${esc(plan.summary)}</div></div>`;
+}
+
+function ago2(s) {  // relative time that also handles the future
+  const d = toDate(s); if (!d) return '';
+  const m = Math.round((d - Date.now()) / 60000);
+  if (m <= 0) return ago(s);
+  return m < 60 ? `in ${m} min` : `in ${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+function spanRow(it, axis) {
+  const t = toDate(it.ts).getTime();
+  const pos = ms => Math.max(0, Math.min(100, (ms - axis.start) / axis.len * 100));
+  let bar = `<div class="tick" style="left:${pos(t)}%"></div>`, dur = '';
+  if (it.type === 'ai') {
+    const d = it.duration_ms || 0, s = pos(t - d);
+    bar = `<div class="bar ${it.status === 200 ? 'ai' : 'bad'}" style="left:${s}%;width:${Math.max(pos(t) - s, .6)}%"></div>`;
+    dur = fmtMs(d);
+  }
+  const tl = `<div class="tl-bar"><div class="track">${bar}</div><div class="small-muted mt-1" style="font-size:.68rem">${fmtClock(it.ts)}</div></div>`;
+  let cls = '', icon = 'dot', label = '', tag = '', text = '', extra = '';
+
+  if (it.type === 'ai') {
+    const ok = it.status === 200;
+    cls = ok ? 'ai' : 'bad'; icon = it.purpose === 'check' ? 'patch-check' : 'stars';
+    label = it.purpose === 'check' ? 'Fact check' : (it.purpose === 'lesson' ? 'Draft lesson' : 'Draft post');
+    if (it.attempt) label += ` ${it.attempt}`;
+    tag = `${esc(it.provider)} · ${esc(it.model)}`;
+    text = ok ? (it.prompt_tokens != null ? `${num(it.prompt_tokens)} → ${num(it.completion_tokens)} tokens` : '') : `<span class="text-danger">${it.status ? 'HTTP ' + it.status : 'no answer'}${it.error ? ' · ' + esc(it.error) : ''}</span>`;
+    const v = it.verdict;
+    if (v) {
+      const d = parse(v.detail) || {};
+      if (v.step === 'validate') extra += `<div class="verdict ok"><i class="bi bi-check-circle-fill"></i>Passed the checks</div>`;
+      else if (v.step === 'rejected') extra += `<div class="verdict bad"><i class="bi bi-x-circle-fill"></i>Rejected by the checks</div><div class="txt">${esc(v.summary)}</div>`;
+      else if (v.step === 'not news') extra += `<div class="verdict warn"><i class="bi bi-slash-circle"></i>Not news — skipped</div>`;
+      else if (v.step === 'fact check') {
+        extra += d.errors && d.errors.length
+          ? `<div class="verdict bad"><i class="bi bi-x-circle-fill"></i>${esc(v.summary)}</div><ul class="issues">${d.errors.map(issue).join('')}</ul>`
+          : `<div class="verdict ok"><i class="bi bi-check-circle-fill"></i>No wrong statements</div>`;
+        if (d.ignored && d.ignored.length) extra += `<details><summary>${d.ignored.length} finding${d.ignored.length > 1 ? 's' : ''} ignored (they don't quote the lesson)</summary><ul class="issues ignored">${d.ignored.map(issue).join('')}</ul></details>`;
+      }
+      if (v.step === 'validate' && d.text) extra += `<details><summary>Show the text</summary><div class="post-preview" dir="auto">${d.title ? `<b>${esc(d.title)}</b>\n\n` : ''}${esc(d.text)}</div></details>`;
+    }
+    if (it.response) extra += `<details><summary>Raw AI answer</summary><pre class="code" dir="auto">${esc(pretty(it.response))}</pre></details>`;
+  } else {
+    const d = parse(it.detail);
+    const S = {
+      fetch: ['', 'cloud-download', 'Fetched feeds'], plan: ['', 'signpost-split', 'Posting decision'],
+      candidates: ['', 'funnel', 'Ranked candidates'], text: ['', 'file-earmark-text', 'Read the article'],
+      correct: ['warn', 'arrow-repeat', 'Sent back for correction'], accepted: ['ok', 'check2-circle', 'Lesson accepted'],
+      'gave up': ['bad', 'x-octagon', 'Gave up on this article'], skip: ['warn', 'skip-forward', 'Skipped'],
+      fallback: ['warn', 'arrow-left-right', 'Provider unavailable, trying the next'], format: ['', 'film', 'Built the media'],
+      sent: ['ok', 'send-check', 'Posted to Telegram'], 'send failed': ['bad', 'x-octagon', 'Sending failed'],
+      preview: ['ok', 'eye', 'Test run: would post'], validate: ['ok', 'check-circle', 'Passed the checks'],
+      rejected: ['bad', 'x-circle', 'Rejected by the checks'], 'not news': ['warn', 'slash-circle', 'Not news'],
+      'fact check': ['', 'patch-check', 'Fact check result'],
+    }[it.step] || ['', 'dot', it.step];
+    [cls, icon, label] = S;
+    text = it.step === 'correct' ? '' : esc(it.summary || '');
+    if (it.step === 'correct' && d && d.errors) { text = esc(it.summary); extra = `<ul class="issues">${d.errors.map(issue).join('')}</ul>`; }
+    else if (it.step === 'candidates' && Array.isArray(d)) {
+      extra = `<details><summary>Show the top ${d.length}</summary><div class="table-responsive"><table class="table mini-table mt-1">
+        <thead><tr><th>#</th><th>Title</th><th>Source</th><th class="num">Relevance</th></tr></thead><tbody>${d.map((a, i) => `<tr><td class="small-muted">${i + 1}</td>
+        <td><a href="${esc(a.url)}" target="_blank" rel="noopener" ${hasRtl(a.title) ? 'dir="rtl"' : ''}>${esc(a.title)}</a></td><td>${esc(a.source)}</td>
+        <td class="num">${a.relevance == null ? '' : Number(a.relevance).toFixed(2)}</td></tr>`).join('')}</tbody></table></div></details>`;
+    } else if (it.step === 'text' && d && d.text) {
+      extra = `<details><summary>Show the text the AI received</summary><div class="post-preview" dir="auto" style="max-height:260px;overflow:auto">${esc(d.text)}</div></details>`;
+    } else if (it.step === 'preview' && d && d.text) {
+      extra = `<div class="post-preview" dir="auto">${d.text.replace(/<(\/?)(b|i|u|a)\b[^>]*>/g, '\u0000$1$2\u0001').replace(/[&<>"']/g, c => esc(c)).replace(/\u0000(\/?)(b|i|u|a)\u0001/g, (m, sl, t) => t === 'a' ? '' : `<${sl}${t}>`)}</div>`;
+    } else if (it.step === 'sent' && d && d.message_id && traceChannel) {
+      extra = `<a class="btn btn-sm btn-light-b mt-1" href="https://t.me/${esc(traceChannel)}/${d.message_id}" target="_blank" rel="noopener"><i class="bi bi-telegram me-1"></i>Open the post</a>`;
+    } else if (d && d.url && ['skip', 'sent', 'send failed'].includes(it.step)) {
+      // url is shown in the group header
+    } else if (it.step === 'plan' && d) {
+      text = `${esc(it.summary)}${d.per_day ? ` · ${d.sent_24h} of ${d.per_day} posted in the last 24 h` : ''}${d.next_post_at ? ` · next allowed ${fmtTime(d.next_post_at)}` : ''}`;
+    } else if (it.detail && !d) {
+      extra = `<details><summary>Details</summary><pre class="code">${esc(it.detail)}</pre></details>`;
+    }
+  }
+  return `<div class="span ${cls}"><div class="ic"><i class="bi bi-${icon}"></i></div>
+    <div><div class="lbl">${label}${tag ? `<span class="tag">${tag}</span>` : ''}</div>${text ? `<div class="txt">${text}</div>` : ''}${extra}</div>
+    ${tl}<div class="dur">${dur}</div></div>`;
+}
+function issue(e) {
+  const [said, truth] = String(e).split('->');
+  return `<li dir="auto">${esc(said.trim())}${truth ? `<span class="arrow">→</span><b>${esc(truth.trim())}</b>` : ''}</li>`;
+}
+
+let traceChannel = null;
 async function openRun(id) {
+  clearTimeout(traceTimer);
+  traceSig = ''; traceWasLive = false;
   const drawer = bootstrap.Offcanvas.getOrCreateInstance($('trace'));
   $('trace-title').textContent = `Run #${id}`;
   $('trace-sub').textContent = 'Loading…';
   $('trace-body').innerHTML = '<div class="skeleton"><span class="spinner-border spinner-border-sm"></span></div>';
   drawer.show();
+  renderRun(id);
+}
+$('trace').addEventListener('hidden.bs.offcanvas', () => { clearTimeout(traceTimer); traceTimer = null; });
+
+async function renderRun(id) {
   const run = await api(`/panel/api/runs/${id}`);
   if (run.error) { $('trace-body').innerHTML = `<div class="empty">${esc(run.error)}</div>`; return; }
-  const bot = state.bots.find(b => b.id === run.bot_id);
-  const dur = run.finished_at ? toDate(run.finished_at) - toDate(run.started_at) : null;
-  $('trace-sub').innerHTML = `${esc(bot ? bot.name : 'Bot #' + run.bot_id)} · ${run.trigger === 'manual' ? 'started by hand' : 'scheduled'}`;
-  $('trace-title').innerHTML = `Run #${run.id} <span class="ms-2">${runPill(run)}</span>`;
+  const live = !run.finished_at;
   const items = run.timeline || [];
-  const aiCount = items.filter(i => i.type === 'ai').length;
-  $('trace-body').innerHTML = `
-    <div class="row g-2 mb-3">
-      ${[['Started', fmtTime(run.started_at)], ['Duration', fmtMs(dur)], ['Fetched', num(run.fetched)], ['Posted', num(run.posted)], ['AI requests', num(aiCount)]]
-        .map(([k, v]) => `<div class="col"><div class="tile py-2"><div class="label">${k}</div><div class="fw-semibold">${v}</div></div></div>`).join('')}
-    </div>
-    ${run.error ? `<div class="alert alert-danger py-2 small">${esc(run.error)}</div>` : ''}
-    ${items.length ? `<div class="tl">${items.map(traceItem).join('')}</div>`
-      : '<div class="empty"><i class="bi bi-hourglass"></i>No steps recorded for this run.<div class="small mt-1">Steps are kept for 30 days.</div></div>'}`;
+  const sig = `${items.length}|${run.finished_at}`;
+  if (sig !== traceSig) {
+    traceSig = sig;
+    const bot = state.bots.find(b => b.id === run.bot_id);
+    const learning = bot ? bot.mode === 'learning' : items.some(i => i.purpose === 'lesson');
+    if (!traceChannel || (botData && botData.bot.id === run.bot_id)) traceChannel = botData && botData.bot.id === run.bot_id ? botData.channel : traceChannel;
+    const start = toDate(run.started_at).getTime();
+    const end = run.finished_at ? toDate(run.finished_at).getTime() : Date.now();
+    const axis = { start, len: Math.max(end - start, 1000) };
+    const groups = groupTimeline(items);
+    groups.articles.forEach(g => { let n = 0, c = 0; g.rows.forEach(r => { if (r.type === 'ai') r.attempt = r.purpose === 'check' ? ++c : ++n; }); });
+    $('trace-sub').innerHTML = `${esc(bot ? bot.name : 'Bot #' + run.bot_id)} · <span class="pill pill-mute">${trigLabel(run.trigger)}</span>`;
+    $('trace-title').innerHTML = `Run #${run.id} <span class="ms-2">${runPill(run)}</span>${live ? ' <span class="live ms-2">live</span>' : ''}`;
+    const aiCount = items.filter(i => i.type === 'ai').length;
+    const tokens = items.filter(i => i.type === 'ai').reduce((a, i) => a + (i.prompt_tokens || 0) + (i.completion_tokens || 0), 0);
+    $('trace-body').innerHTML = `
+      <div class="row g-2 mb-3">
+        ${[['Started', fmtTime(run.started_at)], ['Duration', live ? fmtMs(Date.now() - start) + '…' : fmtMs(end - start)], ['Articles tried', num(groups.articles.length)],
+           ['AI requests', num(aiCount)], ['Tokens', num(tokens)]]
+          .map(([k, v]) => `<div class="col"><div class="tile py-2"><div class="label">${k}</div><div class="fw-semibold">${v}</div></div></div>`).join('')}
+      </div>
+      ${stages(run, groups, learning)}
+      ${whyBanner(run, groups)}
+      ${items.length ? `
+        <div class="grp"><div class="grp-h"><div class="gt">Preparation</div><span class="small-muted">${groups.prep.length} steps</span></div>
+          ${groups.prep.map(r => spanRow(r, axis)).join('')}</div>
+        ${groups.articles.map((g, i) => {
+          const [pc, pl] = articleOutcome(g);
+          const d = parse(g.head.detail) || {};
+          return `<div class="grp"><div class="grp-h"><span class="pill pill-mute">${i + 1}</span>
+            <div class="gt"><div class="text-truncate" ${hasRtl(g.head.summary) ? 'dir="rtl"' : ''}>${esc(g.head.summary)}</div>
+              <div class="sub">${esc(d.source || '')}${d.url ? ` · <a href="${esc(d.url)}" target="_blank" rel="noopener">source article</a>` : ''}</div></div>
+            <span class="pill ${pc}">${pl}</span></div>
+            ${g.rows.map(r => spanRow(r, axis)).join('') || '<div class="span"><div></div><div class="txt">Working…</div></div>'}</div>`;
+        }).join('')}`
+        : `<div class="empty"><i class="bi bi-hourglass"></i>${live ? 'Starting…' : 'No steps recorded for this run.<div class="small mt-1">Steps are kept for 30 days.</div>'}</div>`}`;
+  }
+  if (live) { traceWasLive = true; traceTimer = setTimeout(() => renderRun(id), 2000); }
+  else if (traceWasLive) {   // the run just finished: refresh the page behind the drawer
+    traceWasLive = false;
+    if (location.hash.startsWith(`#/bots/${run.bot_id}`)) showBot(); else if (location.hash.startsWith('#/runs')) showRuns();
+  }
 }
 
 // ── Runs & posts (all bots) ───────────────────────────────────────────────────
@@ -846,17 +1082,47 @@ async function showPosts() {
 }
 
 // ── Bot actions ───────────────────────────────────────────────────────────────
+function scheduleLine(sc, b) {
+  if (!sc) return '';
+  if (sc.running) return '<span class="live">running now</span>';
+  if (sc.may_post > 0) return '<span class="delta-up fw-semibold">can post now</span>';
+  return sc.next_post_at ? `${fmtTime(sc.next_post_at)} <small>(${ago2(sc.next_post_at)})</small>` : esc(sc.reason);
+}
+
+function schedStrip(sc, b) {
+  if (!sc) return '';
+  const cell = (k, v) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  return `<div class="sched">
+    ${cell('Next post', scheduleLine(sc, b) + (sc.may_post > 0 || sc.running ? '' : `<div class="small-muted fw-normal">${esc(sc.reason || '')}</div>`))}
+    ${cell('Next check', !b.active ? '<span class="small-muted">paused</span>' : sc.next_check_at ? `${fmtTime(sc.next_check_at)} <small>(${ago2(sc.next_check_at)})</small>` : '—')}
+    ${cell('Last 24 h', `${num(sc.sent_24h)} of ${sc.per_day || '∞'} posts`)}
+    ${cell('Article tries left today', num(sc.tries_left))}
+  </div>`;
+}
+
 async function runBot(id) {
-  const btn = $('run-btn'), orig = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running…';
-  try {
-    const res = await api(`/panel/api/bots/${id}/run`, { method: 'POST' });
-    if (res.error) toast(`Error: ${res.error}`, 'error');
-    else toast(`Done: fetched ${res.fetched}, posted ${res.posted} in ${fmtMs(res.duration_ms)}`);
-  } catch (e) { toast('Request failed', 'error'); }
-  btn.disabled = false; btn.innerHTML = orig;
-  if (state.botId === id) showBot();
+  const data = botData && botData.bot.id === id ? botData : await api(`/panel/api/bots/${id}/report?days=1&posts=1`);
+  const sc = data.schedule || {}, b = data.bot;
+  $('run-modal-title').textContent = `Run ${b.name}`;
+  $('run-status').innerHTML = sc.may_post > 0
+    ? `<div class="why good mb-3"><i class="bi bi-check-circle"></i><div><b>The bot may post now.</b> A normal run will try to post one article.</div></div>`
+    : `<div class="why warn mb-3"><i class="bi bi-hourglass-split"></i><div><b>A normal run won't post right now.</b> ${esc(sc.reason || '')}.${sc.next_post_at ? ` Next post allowed ${fmtTime(sc.next_post_at)} (${ago2(sc.next_post_at)}).` : ''}</div></div>`;
+  $('run-normal').checked = sc.may_post > 0 || !b.active;
+  $('run-force').checked = !(sc.may_post > 0) && !!b.active;
+  ['run-normal', 'run-force'].forEach(k => { $(k).disabled = !b.active; $(k).closest('.run-opt').style.opacity = b.active ? '' : '.5'; });
+  if (!b.active) $('run-test').checked = true;
+  $('run-paused').classList.toggle('d-none', !!b.active);
+  $('run-start').onclick = () => startRun(id);
+  bootstrap.Modal.getOrCreateInstance($('run-modal')).show();
+}
+
+async function startRun(id) {
+  const mode = document.querySelector('input[name=run-mode]:checked').value;
+  if (mode === 'force' && !confirm('Post one article to the channel now, ignoring the daily limit?')) return;
+  const res = await fetch(`/panel/api/bots/${id}/run`, jsonOpts('POST', { mode })).then(r => r.json());
+  bootstrap.Modal.getInstance($('run-modal')).hide();
+  if (res.error) { toast(res.error, 'error'); return; }
+  openRun(res.run_id);
 }
 
 async function testBot(id) {
