@@ -7,7 +7,8 @@ configuration survives article-store rebuilds.
 import json
 import os
 import sqlite3
-from datetime import date
+import threading
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 def _db_path() -> str:
@@ -494,17 +495,31 @@ def get_all_settings() -> Dict[str, str]:
 
 RESPONSE_KEEP = 12000  # characters of an AI answer kept for the run trace
 
+_event_lock = threading.Lock()
+_last_event: Optional[datetime] = None
+
+
+def _event_ts() -> str:
+    """A UTC time in microseconds that is always later than the previous one, so a run's
+    steps and AI calls sort in the order they happened even within one millisecond."""
+    global _last_event
+    with _event_lock:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if _last_event is not None and now <= _last_event:
+            now = _last_event + timedelta(microseconds=1)
+        _last_event = now
+        return now.strftime("%Y-%m-%d %H:%M:%S.%f")
+
 
 def log_llm_call(bot_id: Optional[int], purpose: Optional[str], provider: str, model: str, status: int,
                  prompt_tokens: Optional[int] = None, completion_tokens: Optional[int] = None,
                  duration_ms: Optional[int] = None, run_id: Optional[int] = None,
                  response: Optional[str] = None, error: Optional[str] = None) -> None:
     with _conn() as c:
-        # Millisecond times, so a run's steps and AI calls can be put in order.
         c.execute("""INSERT INTO llm_calls (ts, bot_id, purpose, provider, model, status, prompt_tokens,
                      completion_tokens, duration_ms, run_id, response, error)
-                     VALUES (strftime('%Y-%m-%d %H:%M:%f', 'now'),?,?,?,?,?,?,?,?,?,?,?)""",
-                  (bot_id, purpose, provider, model, status, prompt_tokens, completion_tokens, duration_ms,
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                  (_event_ts(), bot_id, purpose, provider, model, status, prompt_tokens, completion_tokens, duration_ms,
                    run_id, (response or "")[:RESPONSE_KEEP] or None, (error or "")[:500] or None))
 
 
@@ -526,8 +541,8 @@ def log_step(run_id: Optional[int], step: str, summary: str = "", detail: Any = 
         detail = json.dumps(detail, ensure_ascii=False, default=str)
     with _conn() as c:
         c.execute("""INSERT INTO run_steps (ts, run_id, step, summary, detail)
-                     VALUES (strftime('%Y-%m-%d %H:%M:%f', 'now'),?,?,?,?)""",
-                  (run_id, step, summary[:500], (detail or "")[:RESPONSE_KEEP] or None))
+                     VALUES (?,?,?,?,?)""",
+                  (_event_ts(), run_id, step, summary[:500], (detail or "")[:RESPONSE_KEEP] or None))
 
 
 def prune_traces(days: int = 30) -> None:

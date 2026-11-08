@@ -424,7 +424,7 @@ const PROVIDER_SLOT = { gemini: 0, groq: 1, mistral: 2 };
 const STATUS = { sent: '--good', skipped: '--warn', failed: '--bad' };
 
 // SQLite stores UTC without a zone; show everything in Berlin time.
-const toDate = s => !s ? null : new Date(/[zZ+]/.test(String(s).slice(10)) ? s : String(s).replace(' ', 'T') + 'Z');
+const toDate = s => !s ? null : new Date(/[zZ+]/.test(String(s).slice(10)) ? s : String(s).replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1') + 'Z');
 const berlin = (s, opts) => { const d = toDate(s); return d ? d.toLocaleString('de-DE', { timeZone: 'Europe/Berlin', ...opts }) : '—'; };
 const fmtTime = s => berlin(s, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 const fmtClock = s => berlin(s, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
