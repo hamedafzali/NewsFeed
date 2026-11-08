@@ -761,7 +761,7 @@ async function showBot() {
   if (learning) tiles.push(tile('Üben taps', num(r.opens), 'anonymous button taps', 'hand-index'));
   tiles.push(tile('Reactions', num(r.reactions), `on posts of the last ${period}`, 'emoji-smile'));
   tiles.push(tile('AI requests', num(r.ai.requests), okRate == null ? 'none in this period' : `${okRate}% answered · ${num(r.ai.prompt_tokens + r.ai.completion_tokens)} tokens`, 'stars'));
-  tiles.push(tile('Runs', num(r.runs.runs), r.runs.failed ? `<span class="delta-down">${r.runs.failed} failed</span> · ${num(r.runs.fetched)} articles fetched` : `${num(r.runs.fetched)} articles fetched`, 'diagram-3'));
+  tiles.push(tile('Runs', num(r.runs.runs), r.runs.failed ? `<span class="delta-down">${r.runs.failed} failed</span> · ${num(r.runs.fetched)} new articles fetched` : `${num(r.runs.fetched)} new articles fetched`, 'diagram-3'));
   $('bot-tiles').innerHTML = tiles.map(t => `<div class="col-6 col-md-4 col-xl">${t}</div>`).join('');
 
   const chartDays = Math.max(state.botDays, 7);
@@ -879,7 +879,8 @@ function stages(run, groups, learning) {
   const tried = groups.articles.length;
   const st = (cls, icon, name, value, sub) => `<div class="stage ${cls}"><div class="st-h"><i class="bi bi-${icon}"></i>${name}</div><div class="st-v">${value}</div><div class="st-s">${sub || '&nbsp;'}</div></div>`;
   const out = [
-    st(fetch ? 'done' : live ? 'active' : 'fail', 'cloud-download', 'Fetch', fetch ? `${num(run.fetched || parseInt(fetch.summary))} articles` : '—', fetch ? 'from the feeds' : ''),
+    st(fetch ? 'done' : live ? 'active' : 'fail', 'cloud-download', 'Fetch', fetch ? `${num((parse(fetch.detail) || {}).in_feeds ?? parseInt(fetch.summary))} articles` : '—',
+       fetch ? ((parse(fetch.detail) || {}).new != null ? `${num(parse(fetch.detail).new)} new since last check` : 'from the feeds') : ''),
     st(cand ? (mayPost ? 'done' : 'warn') : fetch && live ? 'active' : 'idle', 'funnel', 'Choose', cand ? `${parseInt(cand.summary) || 0} candidates` : '—', cand ? (mayPost ? `${tried} tried` : 'may not post now') : ''),
     st(!tried ? 'idle' : 'done', 'file-earmark-text', 'Read', tried ? `${tried} article${tried > 1 ? 's' : ''}` : '—', find('text').length ? 'full text' : ''),
     st(!drafts.length ? (tried && live ? 'active' : 'idle') : drafts.some(d => d.verdict && d.verdict.step === 'validate') ? (rejected ? 'warn' : 'done') : live ? 'active' : 'fail',

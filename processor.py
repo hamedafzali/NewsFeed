@@ -99,7 +99,8 @@ class NewsProcessor:
                 sources=self._sources(),
             )
             bot_id = self._bot_id()
-            self._step("fetch", f"{result.processed} articles fetched from {len(self._sources() or [])} feeds")
+            self._step("fetch", f"{result.fetched} articles in {len(self._sources() or [])} feeds, {result.processed} new",
+                       {"in_feeds": result.fetched, "new": result.processed, "duplicates": result.skipped_duplicates})
             if self.learning and self.publisher and not self.lessons.enabled:
                 return NewsResult(status="error", error_message="Learning channels need MISTRAL_API_KEY",
                                   duration=time.time() - started)
