@@ -6,7 +6,8 @@ import pytest
 import database as db
 from news_platform.models import PipelineResult, RawArticle
 from news_platform.pipeline.ingestion import FeedIngestor, guess_language, strip_publisher_suffix
-from news_platform.pipeline.llm import MistralClient, PostWriter, parse_json_object
+from news_platform.pipeline.llm import (LlmUnavailable, MistralClient, OpenAICompatClient, PostWriter,
+                                        make_client, parse_json_object)
 from news_platform.pipeline.ranking import age_hours
 from news_platform.config import Settings
 from processor import NewsProcessor, drop_same_story
@@ -22,6 +23,10 @@ def isolated(tmp_path, monkeypatch):
     MistralClient._cooling_until = {}
     MistralClient._working = None
     MistralClient._key_interval = 0.0
+    for var in ("LLM_PROVIDERS", "LLM_CHECK_PROVIDERS", "GEMINI_API_KEY", "GROQ_API_KEY", "GEMINI_MODEL", "GROQ_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("LLM_MIN_INTERVAL_MS", "0")
+    OpenAICompatClient._cooling_until, OpenAICompatClient._last_start = {}, {}
     db.init_db()
 
 
@@ -257,7 +262,7 @@ def test_enrich_uses_writer_and_falls_back_to_translator(monkeypatch):
     assert data["post_title"] == "[fa]Brücke gesperrt"
 
     # Key set and writer answers: its output is posted.
-    monkeypatch.setattr(processor.writer.client, "api_key", "k")
+    monkeypatch.setattr(processor.writer.client.clients[0], "api_key", "k")
     monkeypatch.setattr(processor.writer, "write",
                         lambda *a: {"title": "پل بسته شد", "summary": "خلاصه", "summary_en": "Bridge closed"})
     data = processor._enrich_summaries(article)
@@ -405,3 +410,67 @@ def test_daily_cap_on_article_tries():
     assert processor._tries_left(bot_id) == 1
     _sent(bot_id, "skip9", hours_ago=0.5, posted=False, error=db.SKIPPED + "x")
     assert processor._tries_left(bot_id) == 0
+
+
+
+def test_provider_chain_order_and_keys(monkeypatch):
+    assert make_client().names == []                                  # no keys at all
+    monkeypatch.setenv("MISTRAL_API_KEY", "m")
+    assert make_client().names == ["mistral"]                         # default: Mistral only, as before
+    monkeypatch.setenv("LLM_PROVIDERS", "gemini, groq, mistral")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    assert make_client().names == ["groq", "mistral"]                 # gemini has no key: skipped
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    assert make_client().names == ["gemini", "groq", "mistral"]
+    assert make_client("LLM_CHECK_PROVIDERS", rotate=1).names == ["groq", "mistral", "gemini"]
+
+
+def test_lesson_fact_check_goes_to_another_provider(monkeypatch):
+    from news_platform.learning.lesson import LessonWriter
+
+    monkeypatch.setenv("LLM_PROVIDERS", "gemini,groq")
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    writer = LessonWriter()
+    assert writer.client.names == ["gemini", "groq"] and writer.checker.names == ["groq", "gemini"]
+    monkeypatch.setenv("LLM_CHECK_PROVIDERS", "gemini")
+    assert LessonWriter().checker.names == ["gemini"]
+
+
+def test_chain_falls_through_to_the_next_provider(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDERS", "gemini,groq")
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    calls = []
+
+    def fake_post(url, headers, json, timeout):
+        calls.append(url.split("/")[2])
+        return _Resp(500) if "googleapis" in url else _ok('{"ok": true}')
+
+    monkeypatch.setattr("news_platform.pipeline.llm.requests.post", fake_post)
+    assert make_client().complete_json([{"role": "user", "content": "x"}]) == {"ok": True}
+    assert calls == ["generativelanguage.googleapis.com", "api.groq.com"]
+
+
+def test_openai_style_client_retries_plainly_and_waits_on_rate_limit(monkeypatch):
+    sent, sleeps = [], []
+    responses = [_Resp(400), _Resp(429, headers={"retry-after": "7"}), _ok('```json\n{"a": 1}\n```')]
+
+    def fake_post(url, headers, json, timeout):
+        sent.append(json)
+        return responses.pop(0)
+
+    monkeypatch.setattr("news_platform.pipeline.llm.requests.post", fake_post)
+    monkeypatch.setattr("news_platform.pipeline.llm.time.sleep", sleeps.append)
+    client = OpenAICompatClient("gemini", api_key="x")
+    assert client.complete_json([{"role": "user", "content": "x"}]) == {"a": 1}
+    assert "response_format" in sent[0] and "reasoning_effort" in sent[0]
+    assert "response_format" not in sent[1] and "reasoning_effort" not in sent[1]   # 400: asked plainly
+    assert 7.5 in sleeps                                                             # waited as told
+
+    # Still limited after waiting: the provider rests and the chain moves on.
+    responses[:] = [_Resp(429), _Resp(429)]
+    with pytest.raises(LlmUnavailable):
+        client.complete_json([{"role": "user", "content": "x"}])
+    with pytest.raises(LlmUnavailable, match="out of quota"):
+        client.complete_json([{"role": "user", "content": "x"}])

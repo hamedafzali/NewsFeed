@@ -336,10 +336,11 @@ def test_learning_channel_posts_one_audio_with_text_and_practice_button(monkeypa
     monkeypatch.setattr(processor.pipeline, "refresh",
                         lambda **kw: PipelineResult(articles=[_Stored(article)], processed=1))
     monkeypatch.setattr(processor.store, "list_articles", lambda filters: [])
-    monkeypatch.setattr(processor.lessons.client, "api_key", "k")
-    monkeypatch.setattr(processor.lessons.client, "complete_json",
-                        lambda messages, **k: {"errors": []} if messages[0]["content"].startswith("You fact-check")
-                        else _lesson_json())
+    answer = (lambda messages, **k: {"errors": []} if messages[0]["content"].startswith("You fact-check")
+              else _lesson_json())
+    for chain in (processor.lessons.client, processor.lessons.checker):
+        monkeypatch.setattr(chain.clients[0], "api_key", "k")
+        monkeypatch.setattr(chain, "complete_json", answer)
     spoken = []
     monkeypatch.setattr(speech, "synthesize",
                         lambda text, language: spoken.append(text) or speech.Audio(b"mp3", "Katja", 40))

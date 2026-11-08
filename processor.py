@@ -71,7 +71,7 @@ class NewsProcessor:
         self.pipeline = NewsPipeline(self.settings, self.store)
         self.translator = Translator()
         self.writer = PostWriter()
-        self.lessons = LessonWriter(self.writer.client)
+        self.lessons = LessonWriter()
         self.learning = bot_config.get("mode") == "learning"
         self.max_age_hours = float(os.getenv("MAX_ARTICLE_AGE_HOURS", "36"))
         self.logger = logging.getLogger(__name__)

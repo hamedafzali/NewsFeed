@@ -166,11 +166,150 @@ def parse_json_object(text: str) -> Optional[Dict[str, Any]]:
     return value if isinstance(value, dict) else None
 
 
+# --- Other providers (OpenAI-style chat API) and the provider chain ---
+
+PROVIDERS = {
+    # name: (endpoint, key variable, model variable, default model, extra request fields)
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+               "GEMINI_API_KEY", "GEMINI_MODEL", "gemini-2.5-flash", {"reasoning_effort": "none"}),
+    "groq": ("https://api.groq.com/openai/v1/chat/completions",
+             "GROQ_API_KEY", "GROQ_MODEL", "llama-3.3-70b-versatile", {}),
+}
+
+
+class OpenAICompatClient:
+    """One model of a provider with an OpenAI-style API (Gemini, Groq)."""
+    _last_start: Dict[str, float] = {}
+    _cooling_until: Dict[str, float] = {}
+    _lock = threading.Lock()
+    MAX_RETRY_WAIT = 60.0
+
+    def __init__(self, name: str, api_key: Optional[str] = None, model: Optional[str] = None, timeout: int = 60):
+        url, key_var, model_var, default_model, extra = PROVIDERS[name]
+        self.name, self.url, self.extra = name, url, extra
+        self.api_key = (api_key if api_key is not None else os.getenv(key_var, "")).strip()
+        self.model = (model if model is not None else os.getenv(model_var, "")).strip() or default_model
+        self.timeout = timeout
+        self.min_interval = float(os.getenv("LLM_MIN_INTERVAL_MS", "2000")) / 1000
+        self.cooldown = float(os.getenv("MISTRAL_RATE_COOLDOWN_MS", "600000")) / 1000
+        self.logger = logging.getLogger(__name__)
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+    def complete_json(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int = 900) -> Dict[str, Any]:
+        if not self.enabled:
+            raise LlmUnavailable(f"{self.name}: no API key")
+        if OpenAICompatClient._cooling_until.get(self.name, 0) > time.time():
+            raise LlmUnavailable(f"{self.name}: out of quota for now")
+        payload = {"model": self.model, "messages": messages, "temperature": temperature,
+                   "max_tokens": max_tokens, "response_format": {"type": "json_object"}, **self.extra}
+        resp = self._post(payload)
+        if resp.status_code == 400 and ("response_format" in payload or self.extra):
+            # Some models don't take JSON mode or the extra fields: ask plainly (the JSON is parsed anyway).
+            payload = {k: v for k, v in payload.items() if k != "response_format" and k not in self.extra}
+            resp = self._post(payload)
+        if resp.status_code == 429:
+            wait = _retry_after(resp.headers)
+            if wait is not None and wait <= self.MAX_RETRY_WAIT:
+                time.sleep(wait + 0.5)
+                resp = self._post(payload)
+        if resp.status_code == 429:
+            OpenAICompatClient._cooling_until[self.name] = time.time() + self.cooldown
+            raise LlmUnavailable(f"{self.name}: rate limited")
+        if resp.status_code in (401, 403):
+            raise LlmUnavailable(f"{self.name}: API key rejected ({resp.status_code})")
+        if resp.status_code != 200:
+            raise LlmUnavailable(f"{self.name} returned {resp.status_code}")
+        try:
+            text = resp.json()["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError):
+            raise LlmUnavailable(f"{self.name}: unreadable response")
+        parsed = parse_json_object(text if isinstance(text, str) else "")
+        if parsed is None:
+            raise LlmUnavailable(f"{self.name}: unreadable model output")
+        return parsed
+
+    def _post(self, payload: Dict[str, Any]):
+        with OpenAICompatClient._lock:
+            wait = OpenAICompatClient._last_start.get(self.name, 0) + self.min_interval - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            OpenAICompatClient._last_start[self.name] = time.time()
+        try:
+            return requests.post(self.url, headers={"Authorization": f"Bearer {self.api_key}"},
+                                 json=payload, timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise LlmUnavailable(f"{self.name} request failed: {exc}") from exc
+
+
+def _retry_after(headers) -> Optional[float]:
+    try:
+        return float(headers.get("retry-after"))
+    except (TypeError, ValueError):
+        return None
+
+
+class ChainClient:
+    """Asks the providers in order; the first that answers wins."""
+
+    def __init__(self, clients: List[Any]):
+        self.clients = clients
+        self.logger = logging.getLogger(__name__)
+
+    @property
+    def enabled(self) -> bool:
+        return any(c.enabled for c in self.clients)
+
+    @property
+    def names(self) -> List[str]:
+        return [getattr(c, "name", "mistral") for c in self.clients if c.enabled]
+
+    def complete_json(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int = 900) -> Dict[str, Any]:
+        problems = []
+        for client in (c for c in self.clients if c.enabled):
+            try:
+                return client.complete_json(messages, temperature=temperature, max_tokens=max_tokens)
+            except LlmUnavailable as exc:
+                problems.append(str(exc))
+                self.logger.warning("LLM provider failed, trying the next one: %s", exc)
+        raise LlmUnavailable("all LLM providers failed: " + "; ".join(problems) if problems else "no LLM provider has a key")
+
+
+def _provider(name: str):
+    name = name.strip().lower()
+    if name == "mistral":
+        client = MistralClient()
+        client.name = "mistral"
+        return client
+    if name in PROVIDERS:
+        return OpenAICompatClient(name)
+    logging.getLogger(__name__).warning("unknown LLM provider %r in LLM_PROVIDERS", name)
+    return None
+
+
+def make_client(variable: str = "LLM_PROVIDERS", rotate: int = 0) -> ChainClient:
+    """The provider chain named in `variable` (comma-separated, e.g. "gemini,groq,mistral").
+
+    Empty = Mistral only, as before. Providers without a key are skipped. `rotate` moves the
+    first providers to the end, so another model can e.g. fact-check the writer's text.
+    """
+    names = [n for n in (os.getenv(variable) or os.getenv("LLM_PROVIDERS") or "mistral").split(",") if n.strip()]
+    clients = [c for c in (_provider(n) for n in names) if c is not None]
+    if rotate:
+        enabled = [c for c in clients if c.enabled]
+        if len(enabled) > 1:
+            k = rotate % len(enabled)
+            clients = enabled[k:] + enabled[:k]
+    return ChainClient(clients)
+
+
 class PostWriter:
     """Turns an article into a channel post (title + short summary) in the target language."""
 
-    def __init__(self, client: Optional[MistralClient] = None):
-        self.client = client or MistralClient()
+    def __init__(self, client=None):
+        self.client = client or make_client()
         self.logger = logging.getLogger(__name__)
 
     @property

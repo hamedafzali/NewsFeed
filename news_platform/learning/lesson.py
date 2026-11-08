@@ -9,12 +9,13 @@ questions are built from the lesson by code (exercises.py), not by the model.
 import html
 import json
 import logging
+import os
 import random
 import re
 from typing import Any, Dict, List, Optional
 
 from news_platform.learning.grammar import GrammarTopic, find_topic, topics_for
-from news_platform.pipeline.llm import LANGUAGE_NAMES, PERSIAN_CHARS, LlmUnavailable, MistralClient
+from news_platform.pipeline.llm import LANGUAGE_NAMES, PERSIAN_CHARS, LlmUnavailable, MistralClient, make_client
 
 LEVEL_GUIDE = {
     "A1": "5-6 very short main clauses, present tense, only everyday words",
@@ -90,8 +91,15 @@ def headword_forms(entry: str) -> List[str]:
 
 
 class LessonWriter:
-    def __init__(self, client: Optional[MistralClient] = None):
-        self.client = client or MistralClient()
+    def __init__(self, client=None, checker=None):
+        self.client = client or make_client()
+        # The fact check goes to another provider when there is one (LLM_CHECK_PROVIDERS, or
+        # the same chain starting from its second provider): a model checking its own text
+        # misses its own mistakes.
+        if checker is None:
+            checker = make_client("LLM_CHECK_PROVIDERS", rotate=0 if os.getenv("LLM_CHECK_PROVIDERS") else 1) \
+                if client is None else client
+        self.checker = checker
         self.logger = logging.getLogger(__name__)
 
     @property
@@ -150,7 +158,7 @@ class LessonWriter:
         out = None
         for _ in range(2):  # a long answer sometimes comes back cut off: ask once more
             try:
-                out = self.client.complete_json(messages, temperature=0.0, max_tokens=1200)
+                out = self.checker.complete_json(messages, temperature=0.0, max_tokens=1200)
                 break
             except LlmUnavailable as exc:
                 self.logger.warning("lesson fact check unavailable: %s", exc)

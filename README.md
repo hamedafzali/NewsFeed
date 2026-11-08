@@ -32,6 +32,8 @@ Each run takes items from every active feed in turn, keeps only articles publish
 
 Set `MISTRAL_API_KEY` in the deployment environment (e.g. the container manager's project variables) to have Mistral write each post: a short headline and 2–3 sentence summary in the channel language, from the full article text. `MISTRAL_MODEL` pins a model; empty picks the best one the key can use and skips models that are out of quota. Without a key, or if Mistral fails, posts fall back to translating the RSS teaser with LibreTranslate/MyMemory. API keys are never entered in the panel.
 
+More free providers can be added: set `GEMINI_API_KEY` and/or `GROQ_API_KEY` and list the order in `LLM_PROVIDERS` (e.g. `gemini,groq,mistral`). Each request goes to the first provider that has a key and answers; if one fails or runs out of quota the next takes over. Learning lessons are fact-checked by the next provider in the list (or `LLM_CHECK_PROVIDERS`), so a different model checks what the first one wrote. `GEMINI_MODEL` / `GROQ_MODEL` override the default models.
+
 ## API
 
 All v1 API responses use:

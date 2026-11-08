@@ -21,6 +21,15 @@ services:
       # Optional: Mistral model to try first. Empty = automatic: best model the key
       # can use, skipping ones out of quota.
       - MISTRAL_MODEL=${MISTRAL_MODEL:-}
+      # Optional: more free AI providers. LLM_PROVIDERS is the order to try them in
+      # (e.g. gemini,groq,mistral); providers without a key are skipped. The lesson
+      # fact check uses the next provider in the list unless LLM_CHECK_PROVIDERS is set.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_CHECK_PROVIDERS=${LLM_CHECK_PROVIDERS:-}
     ports:
       - "${SERVICE_PORT:-8003}:8003"
     volumes:
