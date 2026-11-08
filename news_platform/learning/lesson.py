@@ -134,9 +134,20 @@ class LessonWriter:
         if out is None:
             return None
         errors = [str(e).strip() for e in (out.get("errors") or []) if str(e).strip()]
+        kept = [e for e in errors if self._quotes_lesson(e, lesson_text)]
         if errors:
-            self.logger.info("lesson fact check found: %s", errors)
-        return errors[:6]
+            self.logger.info("lesson fact check found: %s (kept %d)", errors, len(kept))
+        return kept[:6]
+
+    @staticmethod
+    def _quotes_lesson(error: str, lesson_text: str) -> bool:
+        """Does the error quote the lesson? Small models also "find" article sentences, or nothing at all."""
+        quoted = error.split("->", 1)[0]
+        words = [w for w in _words(_plain(quoted)) if len(w) >= 4]
+        if not words:
+            return False
+        lesson_words = set(_words(lesson_text))
+        return sum(w in lesson_words for w in words) >= 0.6 * len(words)
 
     @staticmethod
     def _prompt(language: str, level: str, explain_language: str, topics: List[GrammarTopic]) -> str:

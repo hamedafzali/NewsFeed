@@ -149,14 +149,24 @@ def test_writer_retries_with_feedback_then_succeeds(monkeypatch):
 
 def test_writer_sends_back_what_the_fact_check_finds(monkeypatch):
     writer = LessonWriter(MistralClient(api_key="k"))
+    wrong = "Im Januar sind bei Protesten viele Menschen gestorben -> im Februar"
     feedback = _fake_model(monkeypatch, writer, [_lesson_json(), _lesson_json()],
-                           [{"errors": ["im Jahr 2008 -> 2013"]}, {"errors": []}])
+                           [{"errors": [wrong]}, {"errors": []}])
     assert writer.write("t", "article", "de", "B1", "fa") is not None
-    assert "im Jahr 2008 -> 2013" in feedback[0]
+    assert wrong in feedback[0]
 
     # Never clean: no lesson rather than a wrong one.
-    feedback = _fake_model(monkeypatch, writer, [_lesson_json()] * 3, [{"errors": ["x -> y"]}] * 3)
+    feedback = _fake_model(monkeypatch, writer, [_lesson_json()] * 3, [{"errors": [wrong]}] * 3)
     assert writer.write("t", "article", "de", "B1", "fa") is None
+
+
+def test_fact_check_ignores_errors_that_do_not_quote_the_lesson(monkeypatch):
+    writer = LessonWriter(MistralClient(api_key="k"))
+    _fake_model(monkeypatch, writer, [_lesson_json()], [{"errors": [
+        "18.12.2025 Einigung auf Digitalpakt 2.0 Fünf Milliarden Euro -> Not in simplified text",
+        "-> Der Parteitag war digital.",
+    ]}])
+    assert writer.write("t", "article", "de", "B1", "fa") is not None
 
 
 def test_format_lesson_escapes_and_has_all_parts():
