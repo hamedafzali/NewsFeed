@@ -288,6 +288,13 @@ def get_sent_posts(bot_id: int, since: str) -> List[Dict]:
         return [dict(r) for r in rows]
 
 
+def count_tries(bot_id: int, since: str) -> int:
+    """Articles the bot worked on at or after `since`: sent, skipped or failed."""
+    with _conn() as c:
+        return c.execute("SELECT COUNT(*) FROM posts WHERE bot_id = ? AND posted_at >= ?",
+                         (bot_id, since)).fetchone()[0]
+
+
 def get_posts(bot_id: int = None, limit: int = 50) -> List[Dict]:
     with _conn() as c:
         if bot_id is not None:

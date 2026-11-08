@@ -48,6 +48,9 @@ SUMMARY_STOPWORDS = set(
 )
 
 
+TRIES_PER_POST = 3  # articles a bot may try per daily post (each try costs Mistral requests)
+
+
 @dataclass
 class NewsResult:
     processed: int = 0
@@ -93,6 +96,7 @@ class NewsProcessor:
                 return NewsResult(status="error", error_message="Learning channels need MISTRAL_API_KEY",
                                   duration=time.time() - started)
             max_posts = self._post_budget(bot_id)
+            attempt_cap = min(max_posts * 3, self._tries_left(bot_id))
             recent_summaries = self._recent_summaries(bot_id)
             candidates = self._candidates(result, self._recent_titles(bot_id))
             posted = 0
@@ -108,7 +112,7 @@ class NewsProcessor:
                 if self.publisher and posted < max_posts:
                     if bot_id is not None and db.has_posted(bot_id, article["url"]):
                         continue
-                    if attempts >= max_posts * 3:
+                    if attempts >= attempt_cap:
                         break
                     attempts += 1
                     data = self._lesson(article) if self.learning else self._enrich_summaries(article)
@@ -228,6 +232,21 @@ class NewsProcessor:
             if now - last < timedelta(hours=24 / per_day * 0.9):
                 return 0
         return 1
+
+    def _tries_left(self, bot_id: Optional[int]) -> int:
+        """Articles this bot may still try in the last 24 h: 3 per daily post.
+
+        Each try costs Mistral requests (writing, retries, fact check), so a day where
+        articles keep failing can't turn into a request every hour.
+        """
+        per_day = int(self.config.get("max_posts_per_day") or 0)
+        if per_day <= 0 or bot_id is None:
+            return 10 ** 6
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+        left = per_day * TRIES_PER_POST - db.count_tries(bot_id, since)
+        if left <= 0:
+            self.logger.info("bot %s: used today's %s article tries; waiting", bot_id, per_day * TRIES_PER_POST)
+        return max(0, left)
 
     def _recent_summaries(self, bot_id: Optional[int]) -> List[tuple]:
         if bot_id is None:

@@ -21,6 +21,7 @@ def isolated(tmp_path, monkeypatch):
     MistralClient._denied = set()
     MistralClient._cooling_until = {}
     MistralClient._working = None
+    MistralClient._key_interval = 0.0
     db.init_db()
 
 
@@ -139,9 +140,10 @@ def test_drop_same_story_across_sources_and_recent_posts():
 # --- Mistral client ---
 
 class _Resp:
-    def __init__(self, status, payload=None):
+    def __init__(self, status, payload=None, headers=None):
         self.status_code = status
         self._payload = payload or {}
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -160,7 +162,7 @@ def test_mistral_skips_denied_and_rate_limited_models(monkeypatch):
     calls = []
     responses = {
         "mistral-large-latest": [_Resp(403)],
-        "mistral-medium-latest": [_Resp(429), _Resp(429)],
+        "mistral-medium-latest": [_Resp(429), _Resp(429), _Resp(429)],
         "mistral-small-latest": [_ok('{"title": "t"}')],
     }
 
@@ -172,10 +174,28 @@ def test_mistral_skips_denied_and_rate_limited_models(monkeypatch):
     monkeypatch.setattr("news_platform.pipeline.llm.time.sleep", lambda s: None)
     client = MistralClient(api_key="k", model="")
     assert client.complete_json([{"role": "user", "content": "x"}]) == {"title": "t"}
-    assert calls == ["mistral-large-latest", "mistral-medium-latest", "mistral-medium-latest", "mistral-small-latest"]
+    assert calls == ["mistral-large-latest"] + ["mistral-medium-latest"] * 3 + ["mistral-small-latest"]
     # What was learned sticks: next call goes straight to the working model.
     assert client.candidate_models()[0] == "mistral-small-latest"
     assert "mistral-large-latest" not in client.candidate_models()
+
+
+def test_mistral_waits_for_the_keys_per_minute_limit(monkeypatch):
+    limit = {"x-ratelimit-limit-req-minute": "2", "x-ratelimit-remaining-req-minute": "0"}
+    responses = [_Resp(429, headers=limit), _ok('{"a": 1}')]
+    calls, sleeps = [], []
+
+    def fake_post(url, headers, json, timeout):
+        calls.append(json["model"])
+        return responses.pop(0)
+
+    monkeypatch.setattr("news_platform.pipeline.llm.requests.post", fake_post)
+    monkeypatch.setattr("news_platform.pipeline.llm.time.sleep", sleeps.append)
+    client = MistralClient(api_key="k", model="open-mistral-nemo")
+    assert client.complete_json([{"role": "user", "content": "x"}]) == {"a": 1}
+    assert calls == ["open-mistral-nemo", "open-mistral-nemo"]   # same model, after waiting
+    assert len(sleeps) == 1 and 30 < sleeps[0] <= 30.5            # one wait: 60 s / 2 requests + margin
+    assert MistralClient._key_interval == 30.5                    # later requests are spaced too
 
 
 def test_parse_json_object_tolerates_fences():
@@ -371,3 +391,17 @@ def test_bot_is_due_after_its_own_interval():
         c.execute("UPDATE activity SET created_at = ?", (stamp,))
     assert is_due(db.get_bot(fast))          # 45 min > 30
     assert not is_due(db.get_bot(slow))      # 45 min < 4 h
+
+
+def test_daily_cap_on_article_tries():
+    bot_id = _bot(max_posts_per_day=2)
+    processor = NewsProcessor({"bot_id": bot_id, "max_posts_per_day": 2})
+    assert processor._tries_left(bot_id) == 6
+    for i in range(4):
+        _sent(bot_id, f"skip{i}", hours_ago=1, posted=False, error=db.SKIPPED + "no clean post")
+    _sent(bot_id, "sent", hours_ago=2)
+    assert processor._tries_left(bot_id) == 1
+    _sent(bot_id, "old", hours_ago=30, posted=False, error=db.SKIPPED + "x")   # yesterday's don't count
+    assert processor._tries_left(bot_id) == 1
+    _sent(bot_id, "skip9", hours_ago=0.5, posted=False, error=db.SKIPPED + "x")
+    assert processor._tries_left(bot_id) == 0

@@ -25,14 +25,31 @@ LEVEL_GUIDE = {
 LEVELS = list(LEVEL_GUIDE)
 # Longest sentence (in words) a level allows; longer ones go back to be split.
 MAX_SENTENCE_WORDS = {"A1": 10, "A2": 13, "B1": 18, "B2": 25}
-MIN_WORDS, MAX_WORDS = 5, 8
+MIN_WORDS, MAX_WORDS = 4, 8
 # The text goes out as the caption of the audio, which Telegram limits to 1024 characters.
-MIN_TEXT_CHARS, MAX_TEXT_CHARS, MAX_TITLE_CHARS = 250, 850, 90
+# MAX_TEXT_CHARS is what the model is asked for; a longer text is cut at a sentence end
+# to fit the caption (HARD_TEXT_CHARS at most).
+MIN_TEXT_CHARS, MAX_TEXT_CHARS, HARD_TEXT_CHARS, MAX_TITLE_CHARS = 250, 850, 950, 90
+CAPTION_RESERVE = 70  # caption characters besides title and text (icon, footer, newlines)
+LONG_SENTENCE_SLACK = 8  # one sentence (often a quote) may go this many words over the limit
 NOT_TARGET_SCRIPT = re.compile(r"[؀-ۿЀ-ӿ一-鿿]")
 LATIN = re.compile(r"[A-Za-z]")
 ARTICLES = {"der", "die", "das", "sich"}
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 MARKDOWN = re.compile(r"\*+|__+|`+")
+
+
+def _fit(text: str, limit: int) -> str:
+    """The text cut after its last whole sentence that fits in `limit` characters."""
+    if len(text) <= limit:
+        return text
+    kept = ""
+    for sentence in (s.strip() for s in SENTENCE_END.split(text) if s.strip()):
+        longer = f"{kept} {sentence}".strip()
+        if len(longer) > limit:
+            break
+        kept = longer
+    return kept
 
 
 def _plain(value: Any) -> str:
@@ -187,14 +204,19 @@ class LessonWriter:
         text = _plain(out.get("text"))
         if not title or len(text) < MIN_TEXT_CHARS:
             return None, "The title is missing or the text is too short."
-        if len(title) > MAX_TITLE_CHARS or len(text) > MAX_TEXT_CHARS:
-            return None, (f"Your text has {len(text)} characters and your title {len(title)}; keep the text to at "
-                          f"most {MAX_TEXT_CHARS} characters and the title to {MAX_TITLE_CHARS}. Leave out details.")
+        if len(title) > MAX_TITLE_CHARS:
+            return None, f"Your title has {len(title)} characters; keep it to {MAX_TITLE_CHARS}."
+        text = _fit(text, min(HARD_TEXT_CHARS, 1024 - CAPTION_RESERVE - len(title)))
+        if len(text) < MIN_TEXT_CHARS:
+            return None, (f"Your text is too long; keep it to at most {MAX_TEXT_CHARS} characters. "
+                          "Leave out details.")
         if NOT_TARGET_SCRIPT.search(title + text):
             return None, f"Write the title and text only in {LANGUAGE_NAMES.get(language, language)}."
         sentences = [s.strip() for s in SENTENCE_END.split(text) if s.strip()]
         limit = MAX_SENTENCE_WORDS.get(level, MAX_SENTENCE_WORDS["B1"])
         too_long = [s for s in sentences if len(s.split()) > limit + 3]  # a little slack
+        if len(too_long) == 1 and len(too_long[0].split()) <= limit + LONG_SENTENCE_SLACK:
+            too_long = []  # one longer sentence, usually a quote, is fine
         if too_long:
             return None, (f"These sentences are too long for level {level} (at most {limit} words each); "
                           "split them into shorter sentences: " + " | ".join(too_long))
@@ -239,8 +261,12 @@ class LessonWriter:
     def _grammar(out: Dict[str, Any], language: str, sentences: List[str]):
         """The chosen topic and a sentence of the text that shows it."""
         topic = find_topic(language, str(out.get("grammar_topic") or "").strip())
-        if not topic:
-            return None, None
+        if not topic or not any(topic.shown_by(s) for s in sentences):
+            # The chosen topic isn't in the text: take another topic of the list that is.
+            shown = [t for t in topics_for(language) if any(t.shown_by(s) for s in sentences)]
+            if not shown:
+                return None, None
+            topic = random.choice(shown)
         wanted = _plain(out.get("grammar_example")).replace("_", "")
         for sentence in sentences:
             if wanted and (wanted.rstrip(".!? ") in sentence) and topic.shown_by(sentence):

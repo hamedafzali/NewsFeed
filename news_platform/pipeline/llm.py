@@ -4,7 +4,9 @@ Configured like Trainova: MISTRAL_API_KEY in the deployment's environment turns 
 on (empty = off, and the processor falls back to LibreTranslate). MISTRAL_MODEL pins
 a model; otherwise models are tried in order, skipping ones the key's tier can't use
 (403/404) and ones out of quota (429, cooled down for a while). Requests are spaced
-to stay under the ~1 request/second limit of lower tiers.
+to stay under the key's requests-per-minute limit, read from Mistral's response
+headers (free keys may allow only 2 a minute); when that limit is hit, the client waits
+for the next slot and asks the same model again instead of giving up.
 """
 import json
 import logging
@@ -43,6 +45,7 @@ class MistralClient:
     _cooling_until: Dict[str, float] = {}
     _working: Optional[str] = None
     _last_start = 0.0
+    _key_interval = 0.0  # seconds between requests the key's per-minute limit allows
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, timeout: int = 45):
         self.api_key = (api_key if api_key is not None else os.getenv("MISTRAL_API_KEY", "")).strip()
@@ -74,8 +77,14 @@ class MistralClient:
             raise LlmUnavailable("no Mistral model is available for this API key")
         for model in models:
             status, data = self._post(model, messages, temperature, max_tokens)
-            if status == 429:
-                time.sleep(1.5)
+            for _ in range(2):
+                if status != 429:
+                    break
+                # Out of requests for this minute (the limit is per key, so another model
+                # wouldn't help): ask again in the next slot. With a known per-minute limit
+                # _post already waits for that slot; without one, pause briefly.
+                if not cls._key_interval:
+                    time.sleep(1.5)
                 status, data = self._post(model, messages, temperature, max_tokens)
             if status == 200:
                 if cls._working != model:
@@ -117,16 +126,26 @@ class MistralClient:
             )
         except requests.RequestException as exc:
             raise LlmUnavailable(f"Mistral request failed: {exc}") from exc
+        self._learn_limit(resp.headers)
         try:
             data = resp.json()
         except ValueError:
             data = {}
         return resp.status_code, data
 
+    @staticmethod
+    def _learn_limit(headers) -> None:
+        try:
+            per_minute = int(headers.get("x-ratelimit-limit-req-minute") or 0)
+        except (TypeError, ValueError):
+            return
+        if per_minute > 0:
+            MistralClient._key_interval = 60.0 / per_minute + 0.5
+
     def _wait_for_slot(self):
         cls = MistralClient
         with cls._lock:
-            wait = cls._last_start + self.min_interval - time.time()
+            wait = cls._last_start + max(self.min_interval, cls._key_interval) - time.time()
             if wait > 0:
                 time.sleep(wait)
             cls._last_start = time.time()

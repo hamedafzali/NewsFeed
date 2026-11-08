@@ -72,6 +72,11 @@ def test_grammar_markers_reject_unrelated_sentences():
     dativ = find_topic("de", "dativ_praep")
     assert not dativ.shown_by("Sie hat gute Chancen, Präsidentin zu werden.")
     assert dativ.shown_by("Sie fährt zu ihrer Familie.")
+    perfekt = find_topic("de", "perfekt")
+    assert perfekt.shown_by("Viele Menschen sind gestorben.")
+    assert perfekt.shown_by("Er ist nach Berlin gefahren, weil er arbeiten muss.")
+    assert not perfekt.shown_by("Sie ist bekannt für ihre einfache Art.")         # adjective, not Perfekt
+    assert not perfekt.shown_by("Sie hat gute Chancen, Präsidentin zu werden.")
 
 
 # --- Lesson checks ---
@@ -93,10 +98,12 @@ def test_check_keeps_what_holds_up_and_drops_the_rest():
     assert lesson["grammar"]["example"].startswith("Er sagte, dass viele Iraner")
 
 
-def test_check_sends_back_a_grammar_topic_the_text_does_not_show():
+def test_check_swaps_a_grammar_topic_the_text_does_not_show():
     lesson, problem = LessonWriter(MistralClient(api_key="k")).check(
         _lesson_json(grammar_topic="obwohl"), "de", "fa")
-    assert lesson is None and "grammar topic" in problem
+    assert problem is None
+    topic, example = lesson["grammar"]["topic"], lesson["grammar"]["example"]
+    assert topic.id != "obwohl" and topic.shown_by(example) and example in lesson["text"]
 
 
 def test_check_strips_markdown_and_sends_back_long_sentences_and_texts():
@@ -104,15 +111,21 @@ def test_check_strips_markdown_and_sends_back_long_sentences_and_texts():
         _lesson_json(title="**Preis** für Freiheit", text=TEXT.replace("Reza Pahlavi", "**Reza Pahlavi**")), "de", "fa")
     assert "*" not in lesson["text"] + lesson["title"] and "Reza Pahlavi hat den Preis" in lesson["text"]
 
+    # Too long for the caption: cut after the last whole sentence that fits.
     lesson, problem = LessonWriter(MistralClient(api_key="k")).check(
         _lesson_json(text=" ".join([TEXT] * 3)), "de", "fa")
-    assert lesson is None and "850 characters" in problem
+    assert problem is None and len(lesson["text"]) <= 950 and lesson["text"].endswith(".")
+    assert caption_length(format_post(lesson)) <= CAPTION_MAX
 
     long_sentence = ("In dieser Übung haben viele Behörden, Hilfsorganisationen und Betreiber kritischer "
                      "Infrastruktur wie Energieversorger, Krankenhäuser und Logistiker drei Tage lang zusammen "
                      "geübt, wie sie im Ernstfall reagieren.")
+    # One longer sentence (often a quote) is fine; two are not.
     lesson, problem = LessonWriter(MistralClient(api_key="k")).check(
         _lesson_json(text=TEXT + " " + long_sentence), "de", "fa", "B1")
+    assert problem is None
+    lesson, problem = LessonWriter(MistralClient(api_key="k")).check(
+        _lesson_json(text=long_sentence + " " + TEXT + " " + long_sentence), "de", "fa", "B1")
     assert lesson is None and "too long" in problem and "Logistiker" in problem
 
 
@@ -133,11 +146,11 @@ def _fake_model(monkeypatch, writer, lessons, checks):
 
 def test_writer_retries_with_feedback_then_succeeds(monkeypatch):
     writer = LessonWriter(MistralClient(api_key="k"))
-    feedback = _fake_model(monkeypatch, writer, [_lesson_json(grammar_topic="konjunktiv2"), _lesson_json()],
+    feedback = _fake_model(monkeypatch, writer, [_lesson_json(title="T" * 120), _lesson_json()],
                            [{"errors": []}])
     lesson = writer.write("t", "article", "de", "B1", "fa")
     assert lesson["level"] == "B1" and lesson["grammar"]["topic"].id == "dass"
-    assert "grammar topic" in feedback[0]
+    assert "title" in feedback[0]
 
 
 def test_writer_sends_back_what_the_fact_check_finds(monkeypatch):

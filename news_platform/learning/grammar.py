@@ -36,6 +36,17 @@ PARTICIPLE = re.compile(
     r"|(an|auf|aus|ein|mit|vor|zurück|ab|fest|teil|weg|zu|statt|bei|nach|fort|her|hin|los)ge[a-zäöüß]{2,}[tn])\b"
 )
 
+# Perfekt puts the participle at the end of the clause ("hat das Gesetz beschlossen."),
+# unlike an adjective after sein ("ist bekannt für ..."); adjectives that look like
+# participles are left out.
+CLAUSE_END_PARTICIPLE = re.compile(
+    r"\b(?!(bekannt|verwandt|beliebt|berühmt|beschäftigt|besorgt|entspannt|erlaubt|verboten|gesund|"
+    r"gestern|gegen|genug|genau|gerade|gern|gesamt|beiden|bereit|bereits|erst|ersten|bisher|vergangen)\b)"
+    r"(ge[a-zäöüß]{2,}[tn]|[a-zäöüß]{2,}iert|(be|er|ver|ent|zer|emp|miss)[a-zäöüß]{2,}[tn]"
+    r"|(an|auf|aus|ein|mit|vor|zurück|ab|fest|teil|weg|zu|statt|bei|nach|fort|her|hin|los)ge[a-zäöüß]{2,}[tn])"
+    r"\s*([.,;:!?“”\"»«)–-]|$)"
+)
+
 GERMAN_TOPICS: List[GrammarTopic] = [
     GrammarTopic(
         "perfekt", "Perfekt",
@@ -43,7 +54,7 @@ GERMAN_TOPICS: List[GrammarTopic] = [
         "جمله می‌آید و اسم مفعول (Partizip II) به آخر جمله می‌رود. بیشتر فعل‌ها با haben می‌آیند؛ فعل‌هایی که "
         "حرکت یا تغییر حالت را نشان می‌دهند (مثل gehen، fahren، sterben) و همچنین sein و bleiben با sein.",
         "Die Regierung hat das Gesetz beschlossen.",
-        _p(r"\b(habe|hast|hat|haben|habt|bin|bist|ist|sind|seid)\b") + (PARTICIPLE,),
+        _p(r"\b(habe|hast|hat|haben|habt|bin|bist|ist|sind|seid)\b") + (CLAUSE_END_PARTICIPLE,),
     ),
     GrammarTopic(
         "praeteritum", "Präteritum",
