@@ -55,6 +55,21 @@ class ContentExtractor:
             return ""
         return self._clean_text(self._html_to_text(html)) if html else ""
 
+    def fetch_image_url(self, url: str) -> Optional[str]:
+        """The page's main image (og:image / twitter:image), or None."""
+        try:
+            html = self._fetch_html(url)
+        except requests.RequestException:
+            return None
+        if not html:
+            return None
+        soup = BeautifulSoup(html, "html.parser")
+        for attrs in ({"property": "og:image"}, {"name": "og:image"}, {"name": "twitter:image"}):
+            tag = soup.find("meta", attrs=attrs)
+            if tag and (tag.get("content") or "").startswith("http"):
+                return tag["content"]
+        return None
+
     def _fetch_html(self, url: str) -> str:
         if not url or "news.google.com" in url:
             return ""

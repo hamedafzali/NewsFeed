@@ -108,6 +108,16 @@ class TelegramPublisher:
             payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
         return self._call("sendAudio", payload, files={"audio": (filename, data, "audio/mpeg")})
 
+    def send_video(self, data: bytes, caption: str = "", duration: Optional[int] = None, width: int = 0,
+                   height: int = 0, filename: str = "lesson.mp4", reply_markup: Optional[dict] = None) -> SendResult:
+        payload = {"chat_id": self.chat_id, "caption": caption, "parse_mode": "HTML", "supports_streaming": "true"}
+        for key, value in (("duration", duration), ("width", width), ("height", height)):
+            if value:
+                payload[key] = str(value)
+        if reply_markup:
+            payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+        return self._call("sendVideo", payload, files={"video": (filename, data, "video/mp4")})
+
     def send_quiz(self, question: str, options: list, correct: int, explanation: str = "") -> SendResult:
         payload = {
             "chat_id": self.chat_id,

@@ -34,6 +34,8 @@ Set `MISTRAL_API_KEY` in the deployment environment (e.g. the container manager'
 
 More free providers can be added: set `GEMINI_API_KEY` and/or `GROQ_API_KEY` and list the order in `LLM_PROVIDERS` (e.g. `gemini,groq,mistral`). Each request goes to the first provider that has a key and answers; if one fails or runs out of quota the next takes over. Learning lessons are fact-checked by the next provider in the list (or `LLM_CHECK_PROVIDERS`), so a different model checks what the first one wrote. `GEMINI_MODEL` / `GROQ_MODEL` override the default models.
 
+A learning channel posts each lesson as one message: the news photo (from the feed, or the article page's `og:image`) as a short video with the slow audio, the lesson text as caption, and a practice button. The video is built with ffmpeg (installed in the Docker image); without a photo or ffmpeg the lesson goes out as an audio post.
+
 ## API
 
 All v1 API responses use:

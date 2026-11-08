@@ -282,6 +282,10 @@ def test_quiz_and_audio_requests(monkeypatch):
     assert quiz["json"]["options"] == [{"text": "A"}, {"text": "B"}, {"text": "C"}]
     assert quiz["json"]["explanation"] == "weil"
     assert audio_method == "sendAudio" and audio["files"]["audio"][1] == b"mp3" and audio["data"]["duration"] == "40"
+    assert publisher.send_video(b"mp4", caption="c", duration=41, width=1280, height=720, reply_markup=button).ok
+    video_method, clip = calls[-1]
+    assert video_method == "sendVideo" and clip["files"]["video"][1] == b"mp4"
+    assert clip["data"]["width"] == "1280" and clip["data"]["supports_streaming"] == "true"
     assert '"url": "https://t.me/x?start=l1"' in audio["data"]["reply_markup"]
 
 
@@ -318,12 +322,81 @@ class _FakePublisher:
         self.sent.append(("audio", kwargs, kwargs.get("reply_markup")))
         return SendResult(ok=True)
 
+    def send_video(self, data, **kwargs):
+        self.sent.append(("video", kwargs, kwargs.get("reply_markup")))
+        return SendResult(ok=True)
+
     def send_quiz(self, question, options, correct, explanation=""):
         self.sent.append(("quiz", question, None))
         return SendResult(ok=True)
 
 
+def _learning_processor(monkeypatch):
+    bot_id = db.add_bot({"name": "Deutsch mit Nachrichten", "city_name": "x", "country_code": "DE",
+                         "bot_token": "1:a", "telegram_chat_id": "-100", "news_language": "de", "mode": "learning"})
+    processor = NewsProcessor({"bot_id": bot_id, "bot_token": "1:a", "telegram_chat_id": "-100",
+                               "news_language": "de", "target_language": "fa", "mode": "learning",
+                               "level": "B1", "max_posts_per_day": 2, "channel_name": "Deutsch mit Nachrichten"})
+    processor.publisher = _FakePublisher()
+    article = {"url": "https://tagesschau.test/a", "title": "Pahlavi erhält Preis", "source_name": "tagesschau",
+               "language": "de", "published_at": format_datetime(datetime.now(timezone.utc) - timedelta(hours=1)),
+               "quality_score": 0.5, "summary": {"tldr": "x"}, "text": "x" * 700,
+               "image_url": "https://images.test/a.jpg"}
+    monkeypatch.setattr(processor.pipeline, "refresh",
+                        lambda **kw: PipelineResult(articles=[_Stored(article)], processed=1))
+    monkeypatch.setattr(processor.store, "list_articles", lambda filters: [])
+    answer = (lambda messages, **k: {"errors": []} if messages[0]["content"].startswith("You fact-check")
+              else _lesson_json())
+    for chain in (processor.lessons.client, processor.lessons.checker):
+        monkeypatch.setattr(chain.clients[0], "api_key", "k")
+        monkeypatch.setattr(chain, "complete_json", answer)
+    monkeypatch.setattr(speech, "synthesize", lambda text, language: speech.Audio(b"mp3", "Katja", 40))
+    return processor
+
+
+def test_learning_post_is_the_news_photo_with_the_audio(monkeypatch):
+    from news_platform.learning import video
+    processor = _learning_processor(monkeypatch)
+    monkeypatch.setattr(video, "available", lambda: True)
+    monkeypatch.setattr(video, "download_image", lambda url: b"jpg" if url == "https://images.test/a.jpg" else None)
+    made = []
+    monkeypatch.setattr(video, "still_video",
+                        lambda image, audio: made.append((image, audio)) or video.Video(b"mp4", 1280, 720, 41))
+
+    assert processor.process_news().posted == 1
+    [(kind, clip, markup)] = processor.publisher.sent
+    assert kind == "video" and made == [(b"jpg", b"mp3")]
+    assert clip["caption"].startswith("🗞 <b>Preis für Freiheit") and clip["width"] == 1280 and clip["duration"] == 41
+    assert markup["inline_keyboard"][0][0]["url"].startswith("https://t.me/PixelWazardsNewsBot?start=l")
+
+
+def test_learning_post_falls_back_to_audio_without_a_photo(monkeypatch):
+    from news_platform.learning import video
+    processor = _learning_processor(monkeypatch)
+    monkeypatch.setattr(video, "available", lambda: True)
+    monkeypatch.setattr(video, "download_image", lambda url: None)
+    monkeypatch.setattr(processor.pipeline.extractor, "fetch_image_url", lambda url: None)
+
+    assert processor.process_news().posted == 1
+    assert [kind for kind, _, _ in processor.publisher.sent] == ["audio"]
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="needs ffmpeg")
+def test_still_video_is_a_playable_mp4(tmp_path):
+    import subprocess
+    from news_platform.learning import video
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=641x361", "-frames:v", "1",
+                    str(tmp_path / "i.jpg")], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=3", "-b:a", "48k",
+                    str(tmp_path / "a.mp3")], check=True)
+    clip = video.still_video((tmp_path / "i.jpg").read_bytes(), (tmp_path / "a.mp3").read_bytes())
+    assert clip and clip.data[4:8] == b"ftyp"
+    assert (clip.width, clip.height) == (640, 360) and clip.duration == 3   # even size for phones
+
+
 def test_learning_channel_posts_one_audio_with_text_and_practice_button(monkeypatch):
+    from news_platform.learning import video
+    monkeypatch.setattr(video, "available", lambda: False)
     bot_id = db.add_bot({"name": "Deutsch mit Nachrichten", "city_name": "x", "country_code": "DE",
                          "bot_token": "1:a", "telegram_chat_id": "-100", "news_language": "de", "mode": "learning"})
     processor = NewsProcessor({"bot_id": bot_id, "bot_token": "1:a", "telegram_chat_id": "-100",
