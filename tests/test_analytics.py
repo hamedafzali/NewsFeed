@@ -67,7 +67,7 @@ def test_a_run_keeps_its_steps_and_the_post_link(monkeypatch):
     processor.run_id = run_id
     monkeypatch.setattr(video, "available", lambda: True)
     monkeypatch.setattr(video, "download_image", lambda url: b"jpg")
-    monkeypatch.setattr(video, "still_video", lambda image, audio: video.Video(b"mp4", 1280, 720, 41))
+    monkeypatch.setattr(video, "cover", lambda image: b"jpg")
 
     result = processor.process_news()
     db.finish_run(run_id, result.status, result.processed, result.posted)

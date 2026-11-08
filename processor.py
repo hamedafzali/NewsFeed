@@ -359,30 +359,32 @@ class NewsProcessor:
         post = format_post(lesson, self.publisher.chat_username())
         audio = speech.synthesize(speech.lesson_script(lesson["title"], lesson["text"], channel, language), language)
         if audio and caption_length(post) <= CAPTION_MAX:
-            clip = self._lesson_video(article, audio.data)
-            if clip:
-                sent = self.publisher.send_video(clip.data, caption=post, duration=clip.duration or audio.duration,
-                                                 width=clip.width, height=clip.height, reply_markup=markup)
-                if sent.ok:
-                    self._step("format", "video (news photo + audio)")
-                    return sent
-                self.logger.warning("lesson video failed (%s); posting the audio alone", sent.error)
+            # Audio, not video: Telegram plays channel videos muted and hides the text when
+            # one is opened, while an audio post plays with sound and keeps the text visible.
+            cover = self._lesson_cover(article)
             sent = self.publisher.send_audio(audio.data, title=lesson["title"], performer=f"{channel} · {audio.voice}",
-                                             caption=post, duration=audio.duration, reply_markup=markup)
+                                             caption=post, duration=audio.duration, reply_markup=markup,
+                                             thumbnail=cover)
+            if not sent.ok and cover:
+                self.logger.warning("lesson audio with cover failed (%s); trying without", sent.error)
+                cover = None
+                sent = self.publisher.send_audio(audio.data, title=lesson["title"],
+                                                 performer=f"{channel} · {audio.voice}", caption=post,
+                                                 duration=audio.duration, reply_markup=markup)
             if sent.ok:
-                self._step("format", "audio")
+                self._step("format", "audio with the news photo as cover" if cover else "audio (no photo)")
                 return sent
             self.logger.warning("lesson audio failed (%s); posting the text alone", sent.error)
         return self.publisher.send_message(post, link_preview=False, reply_markup=markup)
 
-    def _lesson_video(self, article: Dict[str, Any], audio: bytes):
-        """The news photo with the lesson audio as a video, or None (no photo, no ffmpeg, failure)."""
+    def _lesson_cover(self, article: Dict[str, Any]) -> Optional[bytes]:
+        """The news photo as a small square cover, or None (no photo, no ffmpeg, failure)."""
         if not video.available():
             return None
         image = video.download_image(article.get("image_url"))
         if image is None:
             image = video.download_image(self.pipeline.extractor.fetch_image_url(article["url"]))
-        return video.still_video(image, audio) if image else None
+        return video.cover(image) if image else None
 
     def _source_language(self) -> Optional[str]:
         language = (self.config.get("news_language") or "").strip().lower()

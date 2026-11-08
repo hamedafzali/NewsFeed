@@ -135,14 +135,18 @@ class TelegramPublisher:
 
     def send_audio(self, data: bytes, title: str, performer: str = "", caption: str = "",
                    duration: Optional[int] = None, filename: str = "lesson.mp3",
-                   reply_markup: Optional[dict] = None) -> SendResult:
+                   reply_markup: Optional[dict] = None, thumbnail: Optional[bytes] = None) -> SendResult:
         payload = {"chat_id": self.chat_id, "title": title[:64], "performer": performer[:64],
                    "caption": caption, "parse_mode": "HTML"}
         if duration:
             payload["duration"] = str(duration)
         if reply_markup:  # multipart form fields are strings
             payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-        return self._call("sendAudio", payload, files={"audio": (filename, data, "audio/mpeg")})
+        files = {"audio": (filename, data, "audio/mpeg")}
+        if thumbnail:  # a thumbnail can only be uploaded, attached by name
+            payload["thumbnail"] = "attach://cover"
+            files["cover"] = ("cover.jpg", thumbnail, "image/jpeg")
+        return self._call("sendAudio", payload, files=files)
 
     def send_video(self, data: bytes, caption: str = "", duration: Optional[int] = None, width: int = 0,
                    height: int = 0, filename: str = "lesson.mp4", reply_markup: Optional[dict] = None) -> SendResult:

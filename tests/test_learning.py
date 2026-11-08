@@ -276,12 +276,13 @@ def test_quiz_and_audio_requests(monkeypatch):
     assert publisher.send_quiz("Wer?", ["A", "B", "C"], 2, explanation="weil").ok
     button = {"inline_keyboard": [[{"text": "Üben", "url": "https://t.me/x?start=l1"}]]}
     assert publisher.send_audio(b"mp3", title="T", performer="Katja", caption="c", duration=40,
-                                reply_markup=button).ok
+                                reply_markup=button, thumbnail=b"jpg").ok
     (method, quiz), (audio_method, audio) = calls
     assert method == "sendPoll" and quiz["json"]["type"] == "quiz" and quiz["json"]["correct_option_id"] == 2
     assert quiz["json"]["options"] == [{"text": "A"}, {"text": "B"}, {"text": "C"}]
     assert quiz["json"]["explanation"] == "weil"
     assert audio_method == "sendAudio" and audio["files"]["audio"][1] == b"mp3" and audio["data"]["duration"] == "40"
+    assert audio["data"]["thumbnail"] == "attach://cover" and audio["files"]["cover"][1] == b"jpg"
     assert publisher.send_video(b"mp4", caption="c", duration=41, width=1280, height=720, reply_markup=button).ok
     video_method, clip = calls[-1]
     assert video_method == "sendVideo" and clip["files"]["video"][1] == b"mp4"
@@ -323,7 +324,7 @@ class _FakePublisher:
 
     def send_audio(self, data, **kwargs):
         self.sent.append(("audio", kwargs, kwargs.get("reply_markup")))
-        return SendResult(ok=True)
+        return SendResult(ok=True, message_id=77)
 
     def send_video(self, data, **kwargs):
         self.sent.append(("video", kwargs, kwargs.get("reply_markup")))
@@ -357,24 +358,22 @@ def _learning_processor(monkeypatch):
     return processor
 
 
-def test_learning_post_is_the_news_photo_with_the_audio(monkeypatch):
+def test_learning_post_is_the_audio_with_the_news_photo_as_cover(monkeypatch):
     from news_platform.learning import video
     processor = _learning_processor(monkeypatch)
     monkeypatch.setattr(video, "available", lambda: True)
     monkeypatch.setattr(video, "download_image", lambda url: b"jpg" if url == "https://images.test/a.jpg" else None)
-    made = []
-    monkeypatch.setattr(video, "still_video",
-                        lambda image, audio: made.append((image, audio)) or video.Video(b"mp4", 1280, 720, 41))
+    monkeypatch.setattr(video, "cover", lambda image: b"cover:" + image)
 
     assert processor.process_news().posted == 1
-    [(kind, clip, markup)] = processor.publisher.sent
-    assert kind == "video" and made == [(b"jpg", b"mp3")]
-    assert clip["caption"].endswith("<i>Niveau B1</i> · 📢 @LangsameNachrichten")   # forwarded posts lead back
-    assert clip["caption"].startswith("🗞 <b>Preis für Freiheit") and clip["width"] == 1280 and clip["duration"] == 41
+    [(kind, audio, markup)] = processor.publisher.sent
+    assert kind == "audio" and audio["thumbnail"] == b"cover:jpg" and audio["duration"] == 40
+    assert audio["caption"].endswith("<i>Niveau B1</i> · 📢 @LangsameNachrichten")   # forwarded posts lead back
+    assert audio["caption"].startswith("🗞 <b>Preis für Freiheit")
     assert markup["inline_keyboard"][0][0]["url"].startswith("https://t.me/PixelWazardsNewsBot?start=l")
 
 
-def test_learning_post_falls_back_to_audio_without_a_photo(monkeypatch):
+def test_learning_post_has_no_cover_without_a_photo(monkeypatch):
     from news_platform.learning import video
     processor = _learning_processor(monkeypatch)
     monkeypatch.setattr(video, "available", lambda: True)
@@ -382,20 +381,22 @@ def test_learning_post_falls_back_to_audio_without_a_photo(monkeypatch):
     monkeypatch.setattr(processor.pipeline.extractor, "fetch_image_url", lambda url: None)
 
     assert processor.process_news().posted == 1
-    assert [kind for kind, _, _ in processor.publisher.sent] == ["audio"]
+    [(kind, audio, _)] = processor.publisher.sent
+    assert kind == "audio" and audio["thumbnail"] is None
 
 
 @pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="needs ffmpeg")
-def test_still_video_is_a_playable_mp4(tmp_path):
+def test_cover_is_a_small_square_jpeg(tmp_path):
     import subprocess
     from news_platform.learning import video
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=641x361", "-frames:v", "1",
-                    str(tmp_path / "i.jpg")], check=True)
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=3", "-b:a", "48k",
-                    str(tmp_path / "a.mp3")], check=True)
-    clip = video.still_video((tmp_path / "i.jpg").read_bytes(), (tmp_path / "a.mp3").read_bytes())
-    assert clip and clip.data[4:8] == b"ftyp"
-    assert (clip.width, clip.height) == (640, 360) and clip.duration == 3   # even size for phones
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=s=1280x720", "-frames:v", "1",
+                    str(tmp_path / "i.png")], check=True)
+    cover = video.cover((tmp_path / "i.png").read_bytes())
+    assert cover and cover[:2] == b"\xff\xd8" and len(cover) <= video.MAX_COVER_BYTES
+    (tmp_path / "c.jpg").write_bytes(cover)
+    size = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                           str(tmp_path / "c.jpg")], capture_output=True, text=True).stdout.strip()
+    assert size == "320,320"
 
 
 def test_learning_channel_posts_one_audio_with_text_and_practice_button(monkeypatch):
