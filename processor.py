@@ -347,7 +347,7 @@ class NewsProcessor:
             markup = {"inline_keyboard": [[{"text": practice_button(lesson, explain),
                                             "url": practice_link(username, lesson_id)}]]}
 
-        post = format_post(lesson)
+        post = format_post(lesson, self.publisher.chat_username())
         audio = speech.synthesize(speech.lesson_script(lesson["title"], lesson["text"], channel, language), language)
         if audio and caption_length(post) <= CAPTION_MAX:
             clip = self._lesson_video(article, audio.data)

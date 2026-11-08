@@ -317,15 +317,18 @@ def _e(value: str) -> str:
     return html.escape(value or "", quote=False)
 
 
-def format_post(lesson: Dict[str, Any]) -> str:
-    """The channel post: title and text, sent as the caption of the audio (Telegram HTML)."""
+def format_post(lesson: Dict[str, Any], channel: Optional[str] = None) -> str:
+    """The channel post: title and text, sent as the caption of the audio (Telegram HTML).
+    `channel` is the channel's @username: named at the end, so a forwarded or copied post
+    still leads to the channel."""
     labels = LABELS.get(lesson.get("language", "de"), LABELS["de"])
     level = lesson.get("level", "B1")
+    where = f"📢 @{_e(channel)}" if channel else f"#{labels['series'].replace(' ', '')}"
     return "\n".join([f"🗞 <b>{_e(lesson['title'])}</b>",
                       "",
                       _e(lesson["text"]),
                       "",
-                      f"<i>{labels['level']} {_e(level)}</i> · #{labels['series'].replace(' ', '')}"])
+                      f"<i>{labels['level']} {_e(level)}</i> · {where}"])
 
 
 def caption_length(message: str) -> int:

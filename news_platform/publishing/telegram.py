@@ -23,6 +23,7 @@ class SendResult:
 
 class TelegramPublisher:
     _usernames: dict = {}  # bot token -> @username, looked up once
+    _chat_usernames: dict = {}  # (bot token, chat id) -> the channel's public @username, looked up once
 
     def __init__(self, bot_token: str, chat_id: str, timeout: int = 15):
         self.bot_token = bot_token
@@ -43,6 +44,26 @@ class TelegramPublisher:
                 return None
             self._usernames[self.bot_token] = username
         return self._usernames[self.bot_token]
+
+    def chat_username(self) -> Optional[str]:
+        """The channel's public @username (without @), so posts can name the channel;
+        None for private channels or if Telegram can't be reached."""
+        chat = str(self.chat_id or "")
+        if chat.startswith("@"):
+            return chat[1:]
+        key = (self.bot_token, chat)
+        if key not in self._chat_usernames:
+            try:
+                resp = requests.get(f"{API_BASE}/bot{self.bot_token}/getChat", params={"chat_id": chat},
+                                    timeout=self.timeout)
+                data = resp.json()
+            except Exception as exc:
+                self.logger.warning("Telegram getChat failed: %s", exc)
+                return None
+            if not data.get("ok"):
+                return None
+            self._chat_usernames[key] = data.get("result", {}).get("username")
+        return self._chat_usernames[key]
 
     def test_token(self) -> bool:
         try:
@@ -67,6 +88,9 @@ class TelegramPublisher:
     def send_article(self, title: str, summary: str, url: str, source: str,
                      language: str = "fa", image_url: Optional[str] = None) -> SendResult:
         message = self.format_message(title, summary, url, source, language)
+        channel = self.chat_username()
+        if channel:  # forwarded or copied posts still lead back to the channel
+            message += f"\n📢 @{channel}"
         if image_url and len(message) <= 1024:
             result = self._call("sendPhoto", {
                 "chat_id": self.chat_id,

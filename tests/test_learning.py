@@ -314,6 +314,9 @@ class _FakePublisher:
     def bot_username(self):
         return "PixelWazardsNewsBot"
 
+    def chat_username(self):
+        return "LangsameNachrichten"
+
     def send_message(self, text, link_preview=True, reply_markup=None):
         self.sent.append(("message", text, reply_markup))
         return SendResult(ok=True)
@@ -366,6 +369,7 @@ def test_learning_post_is_the_news_photo_with_the_audio(monkeypatch):
     assert processor.process_news().posted == 1
     [(kind, clip, markup)] = processor.publisher.sent
     assert kind == "video" and made == [(b"jpg", b"mp3")]
+    assert clip["caption"].endswith("<i>Niveau B1</i> · 📢 @LangsameNachrichten")   # forwarded posts lead back
     assert clip["caption"].startswith("🗞 <b>Preis für Freiheit") and clip["width"] == 1280 and clip["duration"] == 41
     assert markup["inline_keyboard"][0][0]["url"].startswith("https://t.me/PixelWazardsNewsBot?start=l")
 
@@ -464,3 +468,24 @@ def test_learning_channel_needs_a_mistral_key():
     processor.pipeline.refresh = monkeypatch_refresh
     result = processor.process_news()
     assert result.status == "error" and "MISTRAL_API_KEY" in result.error_message
+
+
+def test_channel_address_is_looked_up_once_and_named_in_posts(monkeypatch):
+    TelegramPublisher._chat_usernames.clear()
+    asked, sent = [], []
+
+    class _Chat:
+        def json(self):
+            return {"ok": True, "result": {"id": -100, "username": "LangsameNachrichten"}}
+
+    monkeypatch.setattr("news_platform.publishing.telegram.requests.get",
+                        lambda url, params, timeout: asked.append(params) or _Chat())
+    monkeypatch.setattr("news_platform.publishing.telegram.requests.post",
+                        lambda url, **kw: sent.append(kw) or _Resp())
+    publisher = TelegramPublisher("1:a", "-100")
+    assert publisher.chat_username() == "LangsameNachrichten" == publisher.chat_username()
+    assert asked == [{"chat_id": "-100"}]                                    # one lookup per channel
+    assert TelegramPublisher("1:a", "@Kanal").chat_username() == "Kanal"     # no lookup needed
+    assert publisher.send_article("T", "S", "https://x.test/a", "tagesschau").ok
+    assert sent[-1]["json"]["text"].endswith("\n📢 @LangsameNachrichten")
+    assert format_post(FDP_LESSON).endswith("#LangsameNachrichten")         # private channel: no address
