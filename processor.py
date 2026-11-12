@@ -375,6 +375,12 @@ class NewsProcessor:
                 self._step("format", "audio with the news photo as cover" if cover else "audio (no photo)")
                 return sent
             self.logger.warning("lesson audio failed (%s); posting the text alone", sent.error)
+            why = f"Telegram refused the audio: {sent.error}"
+        elif not audio:
+            why = "speech synthesis failed with every voice tried"
+        else:
+            why = "the text is too long for an audio caption"
+        self._step("format", f"text only: {why}")
         return self.publisher.send_message(post, link_preview=False, reply_markup=markup)
 
     def _lesson_cover(self, article: Dict[str, Any]) -> Optional[bytes]:

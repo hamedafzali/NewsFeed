@@ -115,3 +115,47 @@ def test_run_now_starts_in_the_background(monkeypatch):
 
     report = client.get(f"/panel/api/bots/{paused}/report").get_json()
     assert report["schedule"]["may_post"] == 1 and report["schedule"]["next_check_at"] is None   # paused
+
+
+class _FakeTts:
+    """Stands in for edge_tts: the listed voices fail, the others return audio."""
+    def __init__(self, failing):
+        self.failing, self.tried = set(failing), []
+
+    def Communicate(self, text, voice, rate=None):
+        tts = self
+
+        class _Stream:
+            async def stream(self):
+                tts.tried.append(voice)
+                if voice in tts.failing:
+                    raise RuntimeError("No audio was received.")
+                yield {"type": "audio", "data": b"mp3"}
+        return _Stream()
+
+
+def test_speech_tries_another_voice_when_one_fails(monkeypatch):
+    import sys
+    from news_platform.learning import speech
+    voices = [v for v, _ in speech.VOICES["de"]]
+    monkeypatch.setattr(speech, "RETRY_PAUSE", 0)
+    monkeypatch.setattr(speech.random, "sample", lambda seq, k: list(seq)[:k])
+    tts = _FakeTts(failing=voices[:1])
+    monkeypatch.setitem(sys.modules, "edge_tts", tts)
+    audio = speech.synthesize("Hallo", "de", with_intro=False)
+    assert audio and audio.data == b"mp3" and tts.tried == voices[:2]
+
+    tts = _FakeTts(failing=voices)
+    monkeypatch.setitem(sys.modules, "edge_tts", tts)
+    assert speech.synthesize("Hallo", "de", with_intro=False) is None
+    assert len(tts.tried) == speech.VOICE_TRIES
+
+
+def test_a_lesson_without_audio_says_why_in_the_trace(monkeypatch):
+    from news_platform.learning import speech
+    processor = _learning_processor(monkeypatch)
+    monkeypatch.setattr(speech, "synthesize", lambda text, language: None)
+    processor.run_id = db.start_run(processor._bot_id(), "manual")
+    assert processor.process_news().posted == 1
+    assert [kind for kind, _, _ in processor.publisher.sent] == ["message"]
+    assert ("format", "text only: speech synthesis failed with every voice tried") in _steps(processor.run_id)

@@ -9,10 +9,14 @@ import asyncio
 import logging
 import os
 import random
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+VOICE_TRIES = 3
+RETRY_PAUSE = 2  # seconds
 
 VOICES: Dict[str, List[Tuple[str, str]]] = {
     "de": [
@@ -84,7 +88,6 @@ def synthesize(text: str, language: str = "de", rate: Optional[str] = None,
     voices = VOICES.get(language)
     if not voices or not text.strip():
         return None
-    voice, name = random.choice(voices)
     rate = rate or os.getenv("TTS_RATE", "-25%")
     try:
         import edge_tts
@@ -92,18 +95,27 @@ def synthesize(text: str, language: str = "de", rate: Optional[str] = None,
         logging.getLogger(__name__).warning("edge-tts is not installed; lesson goes out without audio")
         return None
 
-    async def stream() -> bytes:
+    async def stream(voice: str) -> bytes:
         audio = bytearray()
         async for chunk in edge_tts.Communicate(text, voice, rate=rate).stream():
             if chunk.get("type") == "audio":
                 audio.extend(chunk["data"])
         return bytes(audio)
 
-    try:
-        speech = asyncio.run(asyncio.wait_for(stream(), timeout))
-    except Exception as exc:
-        logging.getLogger(__name__).warning("speech synthesis with %s failed: %s", voice, exc)
-        return None
+    # The speech service sometimes answers "No audio was received" for one voice;
+    # another voice a moment later almost always works.
+    speech, name = b"", ""
+    for attempt, (voice, name) in enumerate(random.sample(voices, min(VOICE_TRIES, len(voices)))):
+        if attempt:
+            time.sleep(RETRY_PAUSE)
+        try:
+            speech = asyncio.run(asyncio.wait_for(stream(voice), timeout))
+        except Exception as exc:
+            logging.getLogger(__name__).warning("speech synthesis with %s failed: %s", voice, exc)
+            continue
+        if speech:
+            break
+        logging.getLogger(__name__).warning("speech synthesis with %s returned no audio", voice)
     if not speech:
         return None
     intro = INTRO.read_bytes() if with_intro and INTRO.exists() else b""
