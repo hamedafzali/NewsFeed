@@ -115,7 +115,8 @@ class NewsProcessor:
                 self._step("plan", status["reason"], status)
             recent_summaries = self._recent_summaries(bot_id)
             candidates = self._candidates(result, self._recent_titles(bot_id))
-            self._step("candidates", f"{len(candidates)} recent articles to choose from",
+            about = f" about {self.config.get('city_name')}" if self.config.get("city_only") else ""
+            self._step("candidates", f"{len(candidates)} recent articles{about} to choose from",
                        [{"title": a.get("title"), "url": a.get("url"), "source": a.get("source_name"),
                          "relevance": a.get("relevance_score")} for a in candidates[:40]])
             posted = 0
@@ -216,12 +217,16 @@ class NewsProcessor:
             articles.setdefault(stored["url"], stored)
 
         source_language = self._source_language()
+        # "Only news about this city": the city's name has to be in the article.
+        city = city_pattern(self.config.get("city_name", "")) if self.config.get("city_only") else None
         scored = []
         for article in articles.values():
             if NOT_POSTABLE_URL.search(article.get("url") or ""):
                 continue
             # Global feeds are shared by all channels; each takes the ones in its language.
             if source_language and article.get("language") != source_language:
+                continue
+            if city and not mentions_city(article, city):
                 continue
             hours = age_hours(article.get("published_at"), now)
             # Undated items can't be proven fresh; skipping them avoids reposting old news.
@@ -431,6 +436,28 @@ class NewsProcessor:
 
     def get_sentiment(self, titles: List[str], finbert_url: str) -> Dict[str, Any]:
         return {}
+
+
+_UMLAUTS = {"ü": "(?:ü|ue|u)", "ö": "(?:ö|oe|o)", "ä": "(?:ä|ae|a)", "ß": "(?:ß|ss)"}
+
+
+def city_pattern(city: str) -> Optional["re.Pattern"]:
+    """Matches the city's name in a text: any umlaut spelling (Tübingen, Tuebingen,
+    Tubingen) and the German adjective (Tübinger, Berliner, Kölner)."""
+    city = (city or "").strip()
+    if not city:
+        return None
+    stem = city[:-2] if city.lower().endswith("en") else city
+    spelled = "".join(_UMLAUTS.get(ch.lower(), re.escape(ch)) for ch in stem)
+    ending = "(?:en|er)" if stem != city else "(?:er)?"
+    return re.compile(rf"\b{spelled}{ending}\w*", re.I)
+
+
+def mentions_city(article: Dict[str, Any], pattern: "re.Pattern") -> bool:
+    summary = article.get("summary")
+    tldr = summary.get("tldr", "") if isinstance(summary, dict) else (summary or "")
+    text = " ".join(filter(None, [article.get("title"), article.get("text"), tldr, article.get("summary_tldr")]))
+    return bool(pattern.search(text))
 
 
 def _title_tokens(title: str) -> set:
@@ -654,6 +681,7 @@ def _run_bot(bot: Dict[str, Any], trigger: str = "manual", force: bool = False, 
         "bot_token": bot["bot_token"],
         "telegram_chat_id": bot["telegram_chat_id"],
         "city_name": bot["city_name"],
+        "city_only": bool(bot.get("city_only")),
         "country_code": bot["country_code"],
         "news_language": bot.get("news_language", "en"),
         "target_language": bot.get("target_language", "fa"),

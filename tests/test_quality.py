@@ -526,3 +526,39 @@ def test_posts_are_spread_over_the_posting_hours():
         c.execute("DELETE FROM posts")
     _sent(bot_id, "morning", hours_ago=5)
     assert processor._post_budget(bot_id) == 0
+
+
+def test_city_only_keeps_articles_that_name_the_city(monkeypatch):
+    rows = [dict(_article("https://swr.test/1", "Gemeinderat in Tübingen beschließt Haushalt", 1), language="de"),
+            dict(_article("https://swr.test/2", "Neue Radwege für Tuebingen", 1), language="de"),
+            dict(dict(_article("https://swr.test/3", "Uni-Klinikum stellt Forscher vor", 1), language="de"),
+                 text="Das Tübinger Universitätsklinikum zeigt eine neue Studie."),
+            dict(_article("https://dw.test/4", "Bundestag beschließt Haushalt in Berlin", 1), language="de"),
+            dict(_article("https://swr.test/5", "Reutlingen: neue Stadtbahn geplant", 1), language="de")]
+    result = PipelineResult(articles=[_Stored(r) for r in rows])
+    processor = NewsProcessor({"bot_id": None, "news_language": "de", "city_name": "Tübingen", "city_only": True})
+    monkeypatch.setattr(processor.store, "list_articles", lambda filters: [])
+    assert sorted(a["url"] for a in processor._candidates(result)) == [
+        "https://swr.test/1", "https://swr.test/2", "https://swr.test/3"]
+    # Without the setting the city is only a hint, so everything stays.
+    processor = NewsProcessor({"bot_id": None, "news_language": "de", "city_name": "Tübingen"})
+    monkeypatch.setattr(processor.store, "list_articles", lambda filters: [])
+    assert len(processor._candidates(result)) == 5
+
+
+def test_city_pattern_spellings():
+    from processor import city_pattern
+    tue = city_pattern("Tübingen")
+    for text in ("in Tübingen", "TUEBINGEN", "Tubingen", "der Tübinger Gemeinderat"):
+        assert tue.search(text), text
+    assert not tue.search("Sigmaringen")
+    berlin = city_pattern("Berlin")
+    assert berlin.search("die Berliner Polizei") and not city_pattern("Berlin").search("Oberlinden")
+    assert city_pattern("") is None
+
+
+def test_city_only_is_saved_per_bot():
+    bot_id = _bot()
+    assert db.get_bot(bot_id)["city_only"] == 0
+    db.update_bot(bot_id, {"city_only": True})
+    assert db.get_bot(bot_id)["city_only"] == 1

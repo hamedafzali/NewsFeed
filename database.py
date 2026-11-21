@@ -38,6 +38,7 @@ def _migrate(c):
         "ALTER TABLE bots ADD COLUMN post_until_hour INTEGER NOT NULL DEFAULT 20",
         "ALTER TABLE posts ADD COLUMN message_id INTEGER",
         "ALTER TABLE posts ADD COLUMN lesson_id INTEGER",
+        "ALTER TABLE bots ADD COLUMN city_only INTEGER NOT NULL DEFAULT 0",
     ]
     for sql in migrations:
         try:
@@ -202,8 +203,8 @@ def add_bot(config: Dict[str, Any]) -> int:
             """INSERT INTO bots
                (name, city_name, country_code, news_language, target_language, bot_token,
                 telegram_chat_id, max_posts_per_run, max_posts_per_day, custom_feeds, active, mode, level,
-                run_every_minutes, post_from_hour, post_until_hour)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                run_every_minutes, post_from_hour, post_until_hour, city_only)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 config["name"], config["city_name"], config["country_code"],
                 config.get("news_language", "en"), config.get("target_language", "fa"),
@@ -212,6 +213,7 @@ def add_bot(config: Dict[str, Any]) -> int:
                 config.get("mode") or "news", config.get("level") or "B1",
                 _run_every(config.get("run_every_minutes")),
                 _hour(config.get("post_from_hour"), 8), _hour(config.get("post_until_hour"), 20),
+                1 if config.get("city_only") else 0,
             ),
         )
         return cur.lastrowid
@@ -268,8 +270,10 @@ def get_bot(bot_id: int) -> Optional[Dict]:
 def update_bot(bot_id: int, config: Dict[str, Any]):
     fields = ["name", "city_name", "country_code", "news_language", "target_language",
               "bot_token", "telegram_chat_id", "max_posts_per_run", "max_posts_per_day",
-              "custom_feeds", "active", "mode", "level", "run_every_minutes", "post_from_hour", "post_until_hour"]
+              "custom_feeds", "active", "mode", "level", "run_every_minutes", "post_from_hour", "post_until_hour", "city_only"]
     updates = {k: config[k] for k in fields if k in config}
+    if "city_only" in updates:
+        updates["city_only"] = 1 if updates["city_only"] else 0
     if "run_every_minutes" in updates:
         updates["run_every_minutes"] = _run_every(updates["run_every_minutes"])
     for key, default in (("post_from_hour", 8), ("post_until_hour", 20)):

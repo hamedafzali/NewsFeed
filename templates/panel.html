@@ -432,6 +432,9 @@
         <div class="col-md-6"><label class="form-label">Bot name *</label><input type="text" class="form-control" id="bot-name" placeholder="Tehran News"></div>
         <div class="col-md-4"><label class="form-label">City *</label><input type="text" class="form-control" id="bot-city" placeholder="Tehran"></div>
         <div class="col-md-2"><label class="form-label">Country *</label><input type="text" class="form-control" id="bot-country" placeholder="DE" maxlength="2"></div>
+        <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="bot-city-only">
+          <label class="form-check-label" for="bot-city-only">Only news about this city</label></div>
+          <div class="form-text">Posts only articles that name the city. Add local feeds below. National feeds rarely mention a small city.</div></div>
         <div class="col-md-3"><label class="form-label">Mode</label>
           <select class="form-select" id="bot-mode" title="Learning: each post is a lesson in the source language, explained in the channel language">
             <option value="news">News</option><option value="learning">Language learning</option></select></div>
@@ -784,7 +787,7 @@ async function showBot() {
     : empty(8, 'stars', `No AI requests in the last ${period}`);
 
   // Config
-  const cfg = [['Name', b.name], ['City', `${b.city_name}, ${b.country_code}`], ['Mode', learning ? `Language learning (${b.level})` : 'News'],
+  const cfg = [['Name', b.name], ['City', `${b.city_name}, ${b.country_code}${b.city_only ? ' (only news about this city)' : ''}`], ['Mode', learning ? `Language learning (${b.level})` : 'News'],
     ['Source language', b.news_language], ['Channel language', b.target_language], ['Telegram chat', b.telegram_chat_id],
     ['Bot token', b.bot_token_masked || '—'], ['Posts per day', b.max_posts_per_day || 'no limit'], ['Posting hours', `${hours(b)} (Berlin)`],
     ['Checks every', `${b.run_every_minutes || 60} minutes`], ['Extra feeds', (b.custom_feeds || '').trim() || 'none']];
@@ -1139,6 +1142,7 @@ function openBotModal(bot = null) {
   $('bot-name').value = bot?.name || '';
   $('bot-city').value = bot?.city_name || '';
   $('bot-country').value = bot?.country_code || '';
+  $('bot-city-only').checked = !!bot?.city_only;
   $('bot-lang').value = bot?.news_language || 'en';
   $('bot-target-lang').value = bot?.target_language || 'fa';
   $('bot-perday').value = bot ? bot.max_posts_per_day ?? 2 : 2;
@@ -1164,7 +1168,7 @@ async function saveBot() {
     max_posts_per_day: parseInt($('bot-perday').value) || 0, run_every_minutes: parseInt($('bot-every').value) || 60,
     post_from_hour: parseInt($('bot-from').value) || 0, post_until_hour: parseInt($('bot-until').value) || 0,
     mode: $('bot-mode').value, level: $('bot-level').value, telegram_chat_id: $('bot-chatid').value,
-    active: $('bot-active').checked ? 1 : 0,
+    active: $('bot-active').checked ? 1 : 0, city_only: $('bot-city-only').checked ? 1 : 0,
   };
   const token = $('bot-token').value;
   if (token) data.bot_token = token;
