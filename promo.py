@@ -23,6 +23,8 @@ TONES = {
 }
 TEXT_MAX = 700        # the caption limit is 1024; the link and channel name are added after
 JOIN = {"fa": "عضو شوید", "de": "Jetzt beitreten", "en": "Join"}
+# A welcome greeting (fa / de / en); only allowed when the owner asks for one in the hints.
+WELCOME = re.compile(r"خوش\s*آمد|willkommen|welcome|سلام|hallo")
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +94,18 @@ class PromoWriter:
         language = host.get("target_language") or "fa"
         language_name = LANGUAGE_NAMES.get(language, language)
         same = host["id"] == target["id"]
-        audience = ("the channel's own readers (a post to pin that tells newcomers what the channel offers)"
+        audience = ("people who don't know the channel yet: it introduces the channel, is pinned in it "
+                    "and forwarded to friends and groups"
                     if same else f"readers of our other channel \"{host.get('name')}\", who may not know this one")
         system = (
             f"You write short Telegram ads in {language_name}.\n"
-            f"Write an ad for the channel described below, aimed at {audience}.\n"
+            f"Write an ad that introduces the channel described below, aimed at {audience}.\n"
             "Rules:\n"
             f"- text: in {language_name}, at most 90 words, 3-6 short lines. A catchy first line, the "
             "concrete benefits, and a closing call to join. 1-3 fitting emojis. No hashtags.\n"
+            "- It is an ad, not a welcome message: never start with a greeting or \"welcome\". "
+            "Open with what the reader gains (e.g. a question or a promise).\n"
+            "- The owner's wishes (if given) come first: follow them over these style rules.\n"
             "- Only promise what the facts say. No invented numbers, prices, prizes or reviews.\n"
             "- Do not put any link or @name in the text; the join link is added below it.\n"
             "- Channel names and German words may stay in Latin letters.\n"
@@ -122,7 +128,7 @@ class PromoWriter:
                 logger.warning("promo writer unavailable: %s", exc)
                 return None
             ad = {"text": str(out.get("text") or "").strip(), "image_prompt": str(out.get("image_prompt") or "").strip()}
-            problem = self._problem(ad, language, language_name)
+            problem = self._problem(ad, language, language_name, hints)
             if not problem:
                 return ad
             messages += [{"role": "assistant", "content": json.dumps(out, ensure_ascii=False)},
@@ -130,9 +136,12 @@ class PromoWriter:
         return None
 
     @staticmethod
-    def _problem(ad: Dict[str, str], language: str, language_name: str) -> Optional[str]:
+    def _problem(ad: Dict[str, str], language: str, language_name: str, hints: str = "") -> Optional[str]:
         if not ad["text"] or not ad["image_prompt"]:
             return "The text or the image_prompt is missing."
+        first_line = ad["text"].splitlines()[0].lower()
+        if WELCOME.search(first_line) and not WELCOME.search(hints.lower()):
+            return "It is an ad, not a welcome message: don't start with a greeting or \"welcome\"."
         if len(ad["text"]) > TEXT_MAX:
             return f"The text is too long ({len(ad['text'])} characters); keep it under {TEXT_MAX}."
         if re.search(r"https?://|t\.me/|@\w", ad["text"]):

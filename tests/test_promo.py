@@ -82,6 +82,17 @@ def test_writer_sends_back_ads_with_links_or_in_the_wrong_language():
     assert "free, with audio" in chain.seen[0][1]["content"] and "humour" in chain.seen[0][0]["content"]
 
 
+def test_an_ad_does_not_start_with_welcome_unless_asked():
+    host = db.get_bot(_bot())
+    welcome = {"text": "به کانال Deutsch mit Nachrichten خوش آمدید!\n" + GOOD["text"], "image_prompt": GOOD["image_prompt"]}
+    chain = _Chain([welcome, GOOD])
+    assert promo.PromoWriter(chain).write(host, host, hints="it is an ad") == GOOD
+    assert "welcome" in chain.seen[1][-1]["content"]
+    assert "not a welcome message" in chain.seen[0][0]["content"]
+    asked = _Chain([welcome])
+    assert promo.PromoWriter(asked).write(host, host, hints="start with خوش آمدید") == welcome
+
+
 def test_cross_promotion_speaks_to_the_other_channels_readers():
     host = db.get_bot(_bot(name="Pixel Wizards News", mode="news"))
     target = db.get_bot(_bot())
