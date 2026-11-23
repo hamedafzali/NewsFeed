@@ -25,23 +25,34 @@ TEXT_MAX = 700        # the caption limit is 1024; the link and channel name are
 JOIN = {"fa": "عضو شوید", "de": "Jetzt beitreten", "en": "Join"}
 IMAGE_RULES = (
     "a ready-to-paste prompt in English for an AI image generator (ChatGPT, Gemini, Midjourney), "
-    "one paragraph of 80-140 words, for a striking square picture that makes people stop scrolling. "
-    "Write it in this order: "
-    "(1) the style and medium first, chosen to fit the tone (e.g. 'Editorial flat vector illustration', "
-    "'Cinematic photograph, 35mm lens, shallow depth of field', 'Soft 3D render, clay style'); "
-    "(2) ONE clear main subject described by what is visible: age, clothes, expression, action. "
-    "Not nationality or language, which a picture can't show; "
-    "(3) the setting with 2-3 concrete props that tell the channel's idea without words "
-    "(e.g. for learning German: earbuds, a notebook with sticky notes, a Berlin U-Bahn window; for local "
-    "news: a recognisable street scene of the city); prefer one fresh visual idea or metaphor over a stock "
-    "scene like 'person smiling at a laptop'; "
-    "(4) composition: 1:1 square, camera angle and distance, where the subject sits, an empty calm area "
-    "in the upper third; "
-    "(5) lighting and mood; "
-    "(6) a colour palette of 3-4 named colours. "
-    "Never name brands, news outlets, the channel, apps or logos, and no screens or pages with readable "
-    "writing. End with: 'No text, letters, numbers, logos or watermarks anywhere in the image.'"
+    "one paragraph of 80-140 words, for a square picture people stop scrolling for.\n"
+    "  First think of ONE fresh visual idea that fits only this channel: a real moment with a feeling "
+    "(someone understanding a German sentence for the first time, a city scene at a special hour) or a "
+    "simple visual metaphor. Then describe that scene like a film director: who exactly (age, clothes, "
+    "expression, gesture), where exactly (a specific kind of place, weather, time of day), what is "
+    "happening right now.\n"
+    "  Start with the style and medium (e.g. risograph print, gouache illustration, cinematic 35mm "
+    "photo, paper-cut collage, soft clay 3D) and then give the camera angle, where the subject sits in the "
+    "square, an empty calm upper third, the light, and a palette of 3-4 named colours.\n"
+    "  Avoid clichés: no globes, flags, stacks of books, light bulbs, speech bubbles, phones or laptops "
+    "showing icons, newspapers with headlines, coffee mugs, laptops, generic 'smiling young adult'. "
+    "Never name brands, news outlets, the channel, apps or logos, and nothing with readable writing.\n"
+    "  The quality to aim for (do not copy these):\n"
+    "  * Risograph print in two inks, deep teal and tomato red on warm off-white paper with visible grain. "
+    "A woman in her thirties in a yellow raincoat waits on a rainy Berlin S-Bahn platform at dawn, eyes "
+    "closed, one earbud in, a small smile as if she just understood something. The rain around her head "
+    "turns into tiny paper birds flying upward. Low angle, woman in the lower left, the birds leading the "
+    "eye up into a calm, empty pale sky. Quiet, hopeful mood. No text, letters, numbers, logos or "
+    "watermarks anywhere in the image.\n"
+    "  * Cinematic photograph, 35mm, shallow depth of field, golden hour. From a wooden punt on a calm "
+    "river, an old man in a flat cap and a teenage girl lean over the side laughing; behind them pastel "
+    "half-timbered houses mirror in the water and willow branches hang in from above. Subjects in the "
+    "lower half, wide calm sky above. Palette: honey gold, sage green, faded rose, river blue. No text, "
+    "letters, numbers, logos or watermarks anywhere in the image."
 )
+# Stock props that make every ad picture look the same.
+CLICHES = re.compile(r"\b(globe|flags?|stacks? of books|language books|light ?bulb|speech bubbles?|"
+                     r"smartphone|laptop|tablet|headlines?|coffee mug|mug|audio icons?|icons?)\b", re.I)
 NO_TEXT = "No text, letters, numbers, logos or watermarks anywhere in the image."
 # A welcome greeting (fa / de / en); only allowed when the owner asks for one in the hints.
 WELCOME = re.compile(r"خوش\s*آمد|willkommen|welcome|سلام|hallo")
@@ -161,6 +172,10 @@ class PromoWriter:
             return ("The image_prompt is too thin. Write 80-140 words: style and medium, one concrete "
                     "subject, setting with props, composition, light, a named colour palette.")
         # Brands come out as garbled logos: the outlets, the channel and Telegram must not be named.
+        cliches = sorted({m.lower() for m in CLICHES.findall(prompt.split("No text")[0])})
+        if cliches:
+            return (f"The image_prompt uses stock props ({', '.join(cliches)}). Find one fresh visual idea, "
+                    "a real moment or a metaphor, and rewrite it without them.")
         names = [target.get("name") or "", "Telegram"]
         for source in _feed_names(target):  # "tagesschau.de" -> also "tagesschau"; "DW Deutsch" -> also "DW"
             names += [source, source.split(".")[0], source.split()[0]]

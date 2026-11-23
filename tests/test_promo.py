@@ -174,3 +174,17 @@ def test_panel_flow_generate_upload_post(monkeypatch):
         assert [p["id"] for p in listed["promos"]] == [ad["id"]]
         assert "image" not in listed["promos"][0]
     assert client.get(f"/panel/api/bots/{target}/promos").get_json()["last"]["hints"] == "free"
+
+
+def test_stock_clip_art_prompts_are_sent_back():
+    host = db.get_bot(_bot())
+    stock = dict(GOOD, image_prompt=(
+        "Editorial flat vector illustration, a young adult wearing casual clothes, smiling while holding a "
+        "smartphone showing wave-like audio icons, next to a coffee mug with a newspaper headline peeking out; "
+        "background includes a small globe and a stack of language books, composition square 1:1, subject "
+        "centered lower third, empty calm sky space in upper third, soft natural lighting, warm and inviting "
+        "mood, palette of teal, amber, cream, and soft gray. " + promo.NO_TEXT))
+    chain = _Chain([stock, GOOD])
+    assert promo.PromoWriter(chain).write(host, host) == GOOD
+    feedback = chain.seen[1][-1]["content"]
+    assert "stock props" in feedback and "globe" in feedback and "smartphone" in feedback
