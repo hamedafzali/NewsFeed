@@ -7,6 +7,7 @@ import time
 from flask import Blueprint, jsonify, request, render_template, current_app
 
 import database as db
+import promo
 from processor import NewsProcessor, is_running, schedule_status, run_bot as run_bot_pipeline
 
 panel = Blueprint("panel", __name__, url_prefix="/panel")
@@ -300,3 +301,97 @@ def run_detail(run_id):
     if not run:
         return jsonify({"error": "Not found"}), 404
     return jsonify(run)
+
+
+# ── Ads (promos) ──────────────────────────────────────────────────────────────
+
+MAX_AD_IMAGE = 8 * 1024 * 1024  # Telegram takes photos up to 10 MB
+
+
+def _promo_out(p):
+    return {k: v for k, v in p.items() if k != "image"}
+
+
+@panel.route("/api/bots/<int:bot_id>/promos")
+def list_promos(bot_id):
+    if not db.get_bot(bot_id):
+        return jsonify({"error": "Not found"}), 404
+    return jsonify({"promos": db.get_promos(bot_id), "last": db.last_promo_hints(bot_id),
+                    "tones": list(promo.TONES)})
+
+
+@panel.route("/api/bots/<int:bot_id>/promos", methods=["POST"])
+def create_promo(bot_id):
+    """Ask the AI for an ad. `bot_id` is the channel the ad will be posted in."""
+    host = db.get_bot(bot_id)
+    data = request.get_json() or {}
+    target = db.get_bot(int(data.get("target_bot_id") or bot_id))
+    if not host or not target:
+        return jsonify({"error": "Not found"}), 404
+    writer = promo.PromoWriter()
+    if not writer.enabled:
+        return jsonify({"error": "No AI provider is configured"}), 400
+    tone = data.get("tone") if data.get("tone") in promo.TONES else "friendly"
+    hints = str(data.get("hints") or "")[:800]
+    ad = writer.write(host, target, hints, tone)
+    if not ad:
+        return jsonify({"error": "The AI did not give a usable ad. Try again."}), 502
+    promo_id = db.add_promo(bot_id, target["id"], hints, tone, ad["text"], ad["image_prompt"],
+                            promo.target_link(target))
+    return jsonify(_promo_out(db.get_promo(promo_id))), 201
+
+
+@panel.route("/api/promos/<int:promo_id>", methods=["PUT"])
+def edit_promo(promo_id):
+    p = db.get_promo(promo_id)
+    if not p:
+        return jsonify({"error": "Not found"}), 404
+    data = request.get_json() or {}
+    db.update_promo(promo_id, {k: str(data[k]) for k in ("text", "image_prompt") if k in data})
+    return jsonify(_promo_out(db.get_promo(promo_id)))
+
+
+@panel.route("/api/promos/<int:promo_id>", methods=["DELETE"])
+def remove_promo(promo_id):
+    db.delete_promo(promo_id)
+    return jsonify({"message": "Deleted"})
+
+
+@panel.route("/api/promos/<int:promo_id>/image", methods=["POST", "DELETE"])
+def promo_image(promo_id):
+    if not db.get_promo(promo_id):
+        return jsonify({"error": "Not found"}), 404
+    if request.method == "DELETE":
+        db.update_promo(promo_id, {"image": None})
+        return jsonify({"message": "Removed"})
+    upload = request.files.get("image")
+    data = upload.read(MAX_AD_IMAGE + 1) if upload else b""
+    if not data:
+        return jsonify({"error": "No image"}), 400
+    if len(data) > MAX_AD_IMAGE:
+        return jsonify({"error": "The image is larger than 8 MB"}), 400
+    if not promo.is_image(data):
+        return jsonify({"error": "Use a JPEG, PNG or WebP image"}), 400
+    db.update_promo(promo_id, {"image": data})
+    return jsonify({"message": "Saved"})
+
+
+@panel.route("/api/promos/<int:promo_id>/image", methods=["GET"])
+def promo_image_file(promo_id):
+    from flask import Response
+    p = db.get_promo(promo_id, with_image=True)
+    if not p or not p.get("image"):
+        return jsonify({"error": "Not found"}), 404
+    return Response(p["image"], mimetype=promo._image_type(p["image"]),
+                    headers={"Cache-Control": "no-store"})
+
+
+@panel.route("/api/promos/<int:promo_id>/post", methods=["POST"])
+def send_promo(promo_id):
+    p = db.get_promo(promo_id)
+    if not p:
+        return jsonify({"error": "Not found"}), 404
+    if p.get("posted_at"):
+        return jsonify({"error": "This ad was already posted. Generate a new one."}), 409
+    result = promo.post_promo(promo_id, pin=bool((request.get_json(silent=True) or {}).get("pin")))
+    return jsonify(result), 200 if result["ok"] else 502

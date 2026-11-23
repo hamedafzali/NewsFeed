@@ -158,6 +158,38 @@ class TelegramPublisher:
             payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
         return self._call("sendVideo", payload, files={"video": (filename, data, "video/mp4")})
 
+    def send_photo(self, data: bytes, caption: str = "", filename: str = "photo.jpg",
+                   content_type: str = "image/jpeg") -> SendResult:
+        """An uploaded photo with an HTML caption (at most 1024 characters)."""
+        payload = {"chat_id": self.chat_id, "caption": caption, "parse_mode": "HTML"}
+        return self._call("sendPhoto", payload, files={"photo": (filename, data, content_type)})
+
+    def pin(self, message_id: int) -> SendResult:
+        """Pin a message silently (the bot needs the 'pin messages' admin right)."""
+        return self._call("pinChatMessage", {"chat_id": self.chat_id, "message_id": message_id,
+                                             "disable_notification": True})
+
+    def channel_link(self) -> Optional[str]:
+        """https://t.me/<name> for a public channel; for a private one, an invite link
+        the bot creates (needs the 'invite users' admin right); None if neither works."""
+        username = self.chat_username()
+        if username:
+            return f"https://t.me/{username}"
+        result = self._call_json("createChatInviteLink", {"chat_id": self.chat_id, "name": "Ad"})
+        return (result or {}).get("invite_link")
+
+    def _call_json(self, method: str, payload: dict) -> Optional[dict]:
+        try:
+            data = requests.post(f"{API_BASE}/bot{self.bot_token}/{method}", json=payload,
+                                 timeout=self.timeout).json()
+        except Exception as exc:
+            self.logger.warning("Telegram %s error: %s", method, exc)
+            return None
+        if not data.get("ok"):
+            self.logger.warning("Telegram %s failed: %s", method, data.get("description"))
+            return None
+        return data.get("result")
+
     def send_quiz(self, question: str, options: list, correct: int, explanation: str = "") -> SendResult:
         payload = {
             "chat_id": self.chat_id,

@@ -305,6 +305,7 @@
         <a href="#" data-tab="posts">Posts</a>
         <a href="#" data-tab="runs">Runs &amp; traces</a>
         <a href="#" data-tab="ai">AI usage</a>
+        <a href="#" data-tab="ads">Ads</a>
         <a href="#" data-tab="config">Configuration</a>
       </div>
       <div id="bot-tab-report" class="bot-tab">
@@ -329,6 +330,22 @@
       <div id="bot-tab-ai" class="bot-tab"><div class="panel"><div class="table-responsive"><table class="table">
         <thead><tr><th>Provider</th><th>Model</th><th>Purpose</th><th class="num">Requests</th><th class="num">Answered</th><th class="num">Avg time</th><th class="num">Tokens in</th><th class="num">Tokens out</th></tr></thead>
         <tbody id="bot-models"></tbody></table></div></div></div>
+      <div id="bot-tab-ads" class="bot-tab">
+        <div class="row g-3">
+          <div class="col-xl-4"><div class="panel"><div class="panel-head"><h6>New ad</h6><span class="hint">posted in this channel</span></div>
+            <div class="panel-body">
+              <label class="form-label">Ad for</label>
+              <select class="form-select mb-3" id="ad-target"></select>
+              <label class="form-label">Tone</label>
+              <select class="form-select mb-3" id="ad-tone"><option value="friendly">Friendly</option><option value="professional">Professional</option><option value="fun">Fun</option></select>
+              <label class="form-label">Hints for the AI (optional)</label>
+              <textarea class="form-control mb-1" id="ad-hints" rows="4" placeholder="e.g. say it is for learning German with daily news, every post has audio, free"></textarea>
+              <div class="form-text mb-3">The AI also gets the channel's real settings (level, posts per day, audio, sources), so it won't promise anything the channel doesn't do.</div>
+              <button class="btn btn-primary w-100" id="ad-generate" onclick="generateAd()"><i class="bi bi-stars me-1"></i>Generate ad</button>
+            </div></div></div>
+          <div class="col-xl-8"><div id="ad-list"></div></div>
+        </div>
+      </div>
       <div id="bot-tab-config" class="bot-tab"><div class="panel"><div class="panel-head"><h6>Configuration</h6>
         <button class="btn btn-sm btn-light-b ms-auto" onclick="editBot(state.botId)"><i class="bi bi-pencil me-1"></i>Edit</button></div>
         <div class="panel-body"><div class="row g-3" id="bot-config"></div></div></div></div>
@@ -723,6 +740,7 @@ async function showBot() {
     a.classList.toggle('on', a.dataset.tab === state.botTab);
   });
   document.querySelectorAll('.bot-tab').forEach(t => t.style.display = t.id === `bot-tab-${state.botTab}` ? '' : 'none');
+  if (state.botTab === 'ads') loadAds();
 
   const data = await api(`/panel/api/bots/${id}/report?days=${state.botDays}&posts=100`);
   if (data.error) { $('bot-header').innerHTML = `<div class="empty"><i class="bi bi-question-circle"></i>Bot not found. <a href="#/bots">Back to bots</a></div>`; return; }
@@ -797,6 +815,120 @@ async function showBot() {
   loadBotRuns();
 }
 
+// ── Ads ───────────────────────────────────────────────────────────────────────
+let adsCache = [];
+async function loadAds() {
+  const id = state.botId;
+  const data = await api(`/panel/api/bots/${id}/promos`);
+  if (data.error) { $('ad-list').innerHTML = `<div class="panel panel-body small text-danger">${esc(data.error)}</div>`; return; }
+  const sel = $('ad-target'), keep = sel.dataset.bot == id ? sel.value : '';
+  sel.innerHTML = state.bots.map(b => `<option value="${b.id}">${b.id === id ? 'This channel: ' : ''}${esc(b.name)}</option>`).join('');
+  sel.value = keep || String(id);
+  if (sel.dataset.bot != id) {  // a different bot: start from the hints used last time
+    sel.dataset.bot = id;
+    $('ad-hints').value = data.last?.hints || '';
+    $('ad-tone').value = data.last?.tone || 'friendly';
+  }
+  adsCache = data.promos;
+  $('ad-list').innerHTML = data.promos.length ? data.promos.map(adCard).join('')
+    : `<div class="panel"><div class="empty"><i class="bi bi-megaphone"></i>No ads yet. Write a few hints and click “Generate ad”.</div></div>`;
+}
+
+function adCard(p) {
+  const here = p.bot_id === state.botId, posted = !!p.posted_at, rtl = hasRtl(p.text) ? 'dir="rtl"' : '';
+  const where = here ? (p.target_bot_id === p.bot_id ? 'For this channel' : `For ${esc(p.target_name || '#' + p.target_bot_id)}`)
+    : `Posted in ${esc(p.bot_name || '#' + p.bot_id)}, for this channel`;
+  const status = posted ? `<span class="pill pill-good">Posted ${fmtTime(p.posted_at)}</span>${p.pinned ? ' <span class="pill pill-info"><i class="bi bi-pin-angle-fill"></i> pinned</span>' : ''}`
+    : '<span class="pill pill-mute">Draft</span>';
+  let growth = '';
+  if (posted && p.members_before != null) {
+    const d = p.members_now == null ? null : p.members_now - p.members_before;
+    growth = `<div class="small-muted">Subscribers of ${esc(p.target_name || 'the channel')}: ${num(p.members_before)} when posted` +
+      (d == null ? '' : ` → ${num(p.members_now)} now (<span class="${d > 0 ? 'delta-up' : d < 0 ? 'delta-down' : ''}">${d > 0 ? '+' : ''}${d}</span>)`) +
+      `. Other posts and ads count too.</div>`;
+  }
+  const tg = posted && here && botData?.channel && p.message_id
+    ? `<a class="btn btn-sm btn-light-b" href="https://t.me/${esc(botData.channel)}/${p.message_id}" target="_blank" rel="noopener"><i class="bi bi-telegram me-1"></i>Open</a>` : '';
+  const img = p.has_image ? `<img src="/panel/api/promos/${p.id}/image?v=${Date.now()}" alt="" style="max-width:100%;max-height:240px;border-radius:8px;display:block" class="mb-2">` : '';
+  const imgControls = posted ? '' : `<div class="d-flex gap-2 flex-wrap">
+      <label class="btn btn-sm btn-light-b mb-0"><i class="bi bi-image me-1"></i>${p.has_image ? 'Replace photo' : 'Upload photo'}
+        <input type="file" accept="image/jpeg,image/png,image/webp" hidden onchange="uploadAdImage(${p.id}, this)"></label>
+      ${p.has_image ? `<button class="btn btn-sm btn-light-b" onclick="removeAdImage(${p.id})"><i class="bi bi-x-lg me-1"></i>Remove photo</button>` : ''}</div>`;
+  return `<div class="panel mb-3"><div class="panel-head"><h6>${where}</h6><span class="ms-auto">${status}</span></div>
+    <div class="panel-body"><div class="row g-3">
+      <div class="col-md-7">
+        <label class="form-label small-muted">Ad text${posted ? '' : ' (edit freely; saved when you click outside)'}</label>
+        <textarea class="form-control" rows="8" id="ad-text-${p.id}" ${rtl} ${posted ? 'readonly' : ''} onchange="saveAd(${p.id})">${esc(p.text)}</textarea>
+        <div class="small-muted mt-1">${p.link ? `Join link added below: <span class="font-monospace">${esc(p.link)}</span>` : '<span class="text-warning">No join link: the promoted channel is private and its bot may not create invite links.</span>'}</div>
+        ${growth}
+      </div>
+      <div class="col-md-5">
+        <label class="form-label small-muted d-flex align-items-center">Photo prompt for ChatGPT, Gemini, Midjourney…
+          <button class="btn btn-sm btn-light-b ms-auto py-0 text-nowrap" onclick="copyAdPrompt(${p.id})"><i class="bi bi-clipboard me-1"></i>Copy</button></label>
+        <textarea class="form-control small mb-2" rows="5" id="ad-prompt-${p.id}" ${posted ? 'readonly' : ''} onchange="saveAd(${p.id})">${esc(p.image_prompt)}</textarea>
+        ${img}${imgControls}
+      </div>
+    </div>
+    ${p.error ? `<div class="small text-danger mt-2">${esc(p.error)}</div>` : ''}
+    <div class="d-flex gap-2 mt-3 flex-wrap">
+      ${posted ? tg : `<button class="btn btn-sm btn-primary" onclick="postAd(${p.id}, false)"><i class="bi bi-send me-1"></i>Post</button>
+        <button class="btn btn-sm btn-light-b" onclick="postAd(${p.id}, true)"><i class="bi bi-pin-angle me-1"></i>Post &amp; pin</button>`}
+      <button class="btn btn-sm btn-light-b ms-auto" onclick="deleteAd(${p.id})" title="Remove from this list (does not delete it in Telegram)"><i class="bi bi-trash"></i></button>
+    </div></div></div>`;
+}
+
+async function generateAd() {
+  const btn = $('ad-generate');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Writing…';
+  try {
+    const res = await api(`/panel/api/bots/${state.botId}/promos`, jsonOpts('POST',
+      { target_bot_id: +$('ad-target').value, tone: $('ad-tone').value, hints: $('ad-hints').value }));
+    if (res.error) toast(res.error, 'error'); else toast('Ad written. Check it, add a photo, then post.');
+  } finally {
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-stars me-1"></i>Generate ad';
+  }
+  loadAds();
+}
+
+async function saveAd(id) {
+  const res = await api(`/panel/api/promos/${id}`, jsonOpts('PUT', { text: $(`ad-text-${id}`).value, image_prompt: $(`ad-prompt-${id}`).value }));
+  toast(res.error ? 'Error: ' + res.error : 'Saved', res.error ? 'error' : 'ok');
+}
+
+async function uploadAdImage(id, input) {
+  const file = input.files[0]; if (!file) return;
+  const form = new FormData(); form.append('image', file);
+  const res = await api(`/panel/api/promos/${id}/image`, { method: 'POST', body: form });
+  if (res.error) toast(res.error, 'error');
+  loadAds();
+}
+async function removeAdImage(id) { await api(`/panel/api/promos/${id}/image`, { method: 'DELETE' }); loadAds(); }
+
+function copyAdPrompt(id) {
+  const el = $(`ad-prompt-${id}`), text = el.value;
+  const done = () => toast('Prompt copied');
+  if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done); return; }
+  el.removeAttribute('readonly'); el.select(); document.execCommand('copy'); el.blur();  // the panel runs on plain http
+  if (adsCache.find(p => p.id === id)?.posted_at) el.setAttribute('readonly', '');
+  done();
+}
+
+async function postAd(id, pin) {
+  const where = botData?.bot?.name || 'this channel';
+  if (!confirm(`Post this ad in “${where}” now${pin ? ' and pin it' : ''}?`)) return;
+  await saveAd(id);
+  const res = await api(`/panel/api/promos/${id}/post`, jsonOpts('POST', { pin }));
+  if (!res.ok) toast('Not posted: ' + (res.error || 'unknown error'), 'error');
+  else toast(res.error || (pin ? 'Ad posted and pinned' : 'Ad posted'), res.error ? 'error' : 'ok');
+  loadAds();
+}
+
+async function deleteAd(id) {
+  if (!confirm('Remove this ad from the list? A posted ad stays in Telegram.')) return;
+  await api(`/panel/api/promos/${id}`, { method: 'DELETE' });
+  loadAds();
+}
+
 async function loadBotRuns() {
   $('bot-runs').innerHTML = loadingRow(8);
   renderRunRows('bot-runs', await api(`/panel/api/bots/${state.botId}/runs?limit=100`), { showBot: false });
@@ -833,7 +965,7 @@ function renderRunRows(target, runs, { compact = false, showBot = true } = {}) {
 // A run is shown like a CI job: a strip of pipeline stages, the reason behind the posting
 // decision, then one group per article tried, with every draft, check, fact check,
 // correction and send as a row on a shared time axis.
-const PURPOSE_LABEL = { lesson: 'Write the lesson', check: 'Fact-check the lesson', post: 'Write the post' };
+const PURPOSE_LABEL = { lesson: 'Write the lesson', check: 'Fact-check the lesson', post: 'Write the post', promo: 'Write an ad' };
 const VERDICT_STEPS = new Set(['validate', 'rejected', 'not news']);
 const pretty = t => { try { return JSON.stringify(JSON.parse(t), null, 2); } catch (e) { return t; } };
 const parse = t => { try { return JSON.parse(t); } catch (e) { return null; } };

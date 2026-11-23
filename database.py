@@ -188,6 +188,27 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, message_id)
             );
+
+            -- Ads for a channel, posted in a channel (the same one or another of ours).
+            -- members_before: the promoted channel's subscribers when the ad went out, so
+            -- the panel can show the change since (counts only, nothing about people).
+            CREATE TABLE IF NOT EXISTS promos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER NOT NULL,          -- channel the ad is posted in
+                target_bot_id INTEGER NOT NULL,   -- channel the ad is for
+                hints TEXT,
+                tone TEXT,
+                text TEXT NOT NULL DEFAULT '',
+                image_prompt TEXT NOT NULL DEFAULT '',
+                image BLOB,
+                link TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                posted_at TIMESTAMP,
+                message_id INTEGER,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                members_before INTEGER,
+                error TEXT
+            );
         """)
         _migrate(c)
         # Per-person learner data was recorded briefly (2026-11-08); it is not kept.
@@ -742,3 +763,64 @@ def get_run(run_id: int) -> Optional[Dict[str, Any]]:
         timeline = [{"type": "step", **dict(s)} for s in steps] + [{"type": "ai", **dict(a)} for a in calls]
         timeline.sort(key=lambda item: (item["ts"] or "", item["type"] == "ai"))
         return {**dict(run), "timeline": timeline}
+
+
+# --- Promos (ads for our channels) ---
+
+PROMO_FIELDS = ("id", "bot_id", "target_bot_id", "hints", "tone", "text", "image_prompt", "link",
+                "created_at", "posted_at", "message_id", "pinned", "members_before", "error")
+
+
+def add_promo(bot_id: int, target_bot_id: int, hints: str, tone: str, text: str, image_prompt: str,
+              link: Optional[str]) -> int:
+    with _conn() as c:
+        return c.execute("""INSERT INTO promos (bot_id, target_bot_id, hints, tone, text, image_prompt, link)
+                            VALUES (?,?,?,?,?,?,?)""",
+                         (bot_id, target_bot_id, hints, tone, text, image_prompt, link)).lastrowid
+
+
+def get_promo(promo_id: int, with_image: bool = False) -> Optional[Dict[str, Any]]:
+    cols = ", ".join(PROMO_FIELDS) + ", image IS NOT NULL AS has_image" + (", image" if with_image else "")
+    with _conn() as c:
+        row = c.execute(f"SELECT {cols} FROM promos WHERE id = ?", (promo_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_promos(bot_id: int, limit: int = 30) -> List[Dict[str, Any]]:
+    """Ads posted in this bot's channel or made for it, newest first, with the promoted
+    channel's latest subscriber count."""
+    cols = ", ".join(f"p.{f}" for f in PROMO_FIELDS)
+    with _conn() as c:
+        rows = c.execute(f"""SELECT {cols}, p.image IS NOT NULL AS has_image,
+                                    host.name AS bot_name, target.name AS target_name,
+                                    (SELECT members FROM channel_stats s WHERE s.bot_id = p.target_bot_id
+                                     ORDER BY day DESC LIMIT 1) AS members_now
+                             FROM promos p LEFT JOIN bots host ON host.id = p.bot_id
+                             LEFT JOIN bots target ON target.id = p.target_bot_id
+                             WHERE p.bot_id = ? OR p.target_bot_id = ?
+                             ORDER BY p.id DESC LIMIT ?""", (bot_id, bot_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_promo(promo_id: int, fields: Dict[str, Any]) -> None:
+    allowed = {"text", "image_prompt", "image", "link", "posted_at", "message_id", "pinned",
+               "members_before", "error"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    with _conn() as c:
+        c.execute(f"UPDATE promos SET {', '.join(f'{k} = ?' for k in updates)} WHERE id = ?",
+                  list(updates.values()) + [promo_id])
+
+
+def delete_promo(promo_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM promos WHERE id = ?", (promo_id,))
+
+
+def last_promo_hints(target_bot_id: int) -> Dict[str, Any]:
+    """The hints and tone used last time for this channel, to prefill the form."""
+    with _conn() as c:
+        row = c.execute("SELECT hints, tone FROM promos WHERE target_bot_id = ? ORDER BY id DESC LIMIT 1",
+                        (target_bot_id,)).fetchone()
+        return dict(row) if row else {}
