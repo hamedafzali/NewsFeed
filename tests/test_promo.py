@@ -188,3 +188,66 @@ def test_stock_clip_art_prompts_are_sent_back():
     assert promo.PromoWriter(chain).write(host, host) == GOOD
     feedback = chain.seen[1][-1]["content"]
     assert "stock props" in feedback and "globe" in feedback and "smartphone" in feedback
+
+
+def test_picture_settings_shape_the_rules():
+    target = db.get_bot(_bot())
+    assert promo.picture_options({"style": "oil", "format": "story", "title": "  Hallo   B1 ", "phone": "x"}) == \
+        {"style": "auto", "format": "story", "title": "Hallo B1", "phone": "none"}
+    plain = promo.image_rules(promo.picture_options({}), target)
+    assert "1:1 square" in plain and promo.NO_TEXT in plain and "phone" in plain  # phones are a cliché here
+    rules = promo.image_rules(promo.picture_options(
+        {"style": "photo", "format": "story", "title": "Deutsch mit Nachrichten", "phone": "blank"}), target)
+    assert "9:16" in rules and "cinematic photograph" in rules and "completely blank" in rules
+    assert 'exactly the words "Deutsch mit Nachrichten"' in rules and promo.NO_TEXT not in rules
+
+
+def test_image_prompt_checks():
+    target = db.get_bot(_bot())
+    check = promo.PromoWriter._image_problem
+    assert check(IMAGE, target) is None
+    assert "nationality" in check(IMAGE.replace("A young woman", "A young Persian woman"), target)
+    copied = IMAGE.replace("a tram, a bakery", "rain at dawn, a raincoat on the platform")
+    assert "copies the example" in check(copied, target)
+    assert check(IMAGE.replace("a tram", "a regional train"), target) is None  # "train" is not "rain"
+    titled = {"style": "auto", "format": "square", "title": "Deutsch mit Nachrichten", "phone": "none"}
+    assert "exact words" in check(IMAGE, target, titled)
+    with_title = IMAGE.replace("upper third.", 'upper third with the title "Deutsch mit Nachrichten" in bold letters.')
+    assert check(with_title, target, titled) is None
+    assert "channel" not in (check(with_title, target, titled) or "")
+    blank = dict(titled, title="", phone="blank")
+    assert "phone" in check(IMAGE, target, blank)
+    phone = IMAGE.replace("open on her knee", "open on her knee, a smartphone in her hand with a plain white blank screen")
+    assert check(phone, target, blank) is None
+    assert "smartphone" in check(phone, target)  # without the phone setting it is a stock prop
+
+
+def test_only_one_no_text_line_at_the_end():
+    target = db.get_bot(_bot())
+    pic = promo.picture_options({})
+    body = IMAGE.replace(" " + promo.NO_TEXT, "")
+    out = promo.finish_image_prompt(body + " No props, text, or logos.", pic, target)
+    assert out == body + " " + promo.NO_TEXT
+    mid = "A blank screen with no reflections. Calm light"
+    assert promo.finish_image_prompt(mid, pic, target).startswith("A blank screen with no reflections.")
+    titled = promo.picture_options({"title": "B1 News"})
+    twice = body + ' The only readable text in the image is "B1 News"; no other text.'
+    assert promo.finish_image_prompt(twice, titled, target).count("The only readable text") == 1
+    assert promo.finish_image_prompt(body, titled, target).endswith('The only readable text in the image is "B1 News"; '
+                                                                   "no other text, letters, numbers, logos or watermarks.")
+
+
+def test_new_image_prompt_keeps_the_text(monkeypatch):
+    from news_platform.app import create_app
+    bot_id = _bot()
+    prompt = IMAGE.replace("open on her knee", "open on her knee, holding a phone with a plain blank screen")
+    monkeypatch.setattr(promo.PromoWriter, "__init__",
+                        lambda self, client=None: setattr(self, "client", _Chain([{"image_prompt": prompt}])))
+    promo_id = db.add_promo(bot_id, bot_id, "free", "fun", "متن آگهی", "old prompt", None)
+    client = create_app().test_client()
+    res = client.post(f"/panel/api/promos/{promo_id}/image-prompt", json={"picture": {"phone": "blank", "format": "story"}})
+    assert res.status_code == 200
+    ad = res.get_json()
+    assert ad["text"] == "متن آگهی" and "blank screen" in ad["image_prompt"]
+    assert ad["picture"]["phone"] == "blank" and ad["picture"]["format"] == "story"
+    assert client.get(f"/panel/api/bots/{bot_id}/promos").get_json()["last"]["picture"]["phone"] == "blank"

@@ -341,6 +341,24 @@
               <label class="form-label">Hints for the AI (optional)</label>
               <textarea class="form-control mb-1" id="ad-hints" rows="4" placeholder="e.g. say it is for learning German with daily news, every post has audio, free"></textarea>
               <div class="form-text mb-3">The AI also gets the channel's real settings (level, posts per day, audio, sources), so it won't promise anything the channel doesn't do.</div>
+              <div class="border-top pt-3 mb-3">
+                <div class="fw-semibold small mb-2"><i class="bi bi-image me-1"></i>Picture (for the photo prompt)</div>
+                <div class="row g-2 mb-2">
+                  <div class="col-6"><label class="form-label small-muted mb-1">Style</label>
+                    <select class="form-select form-select-sm" id="ad-style"><option value="auto">AI chooses</option><option value="photo">Photo</option><option value="illustration">Illustration</option><option value="3d">3D render</option><option value="collage">Collage</option></select></div>
+                  <div class="col-6"><label class="form-label small-muted mb-1">Format</label>
+                    <select class="form-select form-select-sm" id="ad-format"><option value="square">Square 1:1 (post)</option><option value="portrait">Portrait 4:5</option><option value="story">Story 9:16</option></select></div>
+                </div>
+                <label class="form-label small-muted mb-1">Phone</label>
+                <select class="form-select form-select-sm mb-1" id="ad-phone" onchange="adPhoneHint()"><option value="none">No phone</option><option value="ai">Phone showing a channel post (drawn by the AI)</option><option value="blank">Phone with a blank screen (for your screenshot)</option></select>
+                <div class="form-text mb-2" id="ad-phone-hint"></div>
+                <div class="form-check form-switch mb-1">
+                  <input class="form-check-input" type="checkbox" id="ad-title-on" onchange="$('ad-title').disabled = !this.checked">
+                  <label class="form-check-label small" for="ad-title-on">Title text in the picture</label>
+                </div>
+                <input class="form-control form-control-sm" id="ad-title" maxlength="40" disabled placeholder="e.g. Deutsch mit Nachrichten">
+                <div class="form-text">Short, in Latin letters: ChatGPT and Gemini spell it well, Midjourney often doesn't, and Persian letters usually come out wrong.</div>
+              </div>
               <button class="btn btn-primary w-100" id="ad-generate" onclick="generateAd()"><i class="bi bi-stars me-1"></i>Generate ad</button>
             </div></div></div>
           <div class="col-xl-8"><div id="ad-list"></div></div>
@@ -824,14 +842,43 @@ async function loadAds() {
   const sel = $('ad-target'), keep = sel.dataset.bot == id ? sel.value : '';
   sel.innerHTML = state.bots.map(b => `<option value="${b.id}">${b.id === id ? 'This channel: ' : ''}${esc(b.name)}</option>`).join('');
   sel.value = keep || String(id);
+  sel.onchange = () => { if (!$('ad-title-on').checked) $('ad-title').value = sel.selectedOptions[0].textContent.replace('This channel: ', ''); };
   if (sel.dataset.bot != id) {  // a different bot: start from the hints used last time
     sel.dataset.bot = id;
     $('ad-hints').value = data.last?.hints || '';
     $('ad-tone').value = data.last?.tone || 'friendly';
+    setAdPicture(data.last?.picture, sel.selectedOptions[0]?.textContent.replace('This channel: ', ''));
   }
   adsCache = data.promos;
   $('ad-list').innerHTML = data.promos.length ? data.promos.map(adCard).join('')
     : `<div class="panel"><div class="empty"><i class="bi bi-megaphone"></i>No ads yet. Write a few hints and click “Generate ad”.</div></div>`;
+}
+
+const PICTURE_LABEL = { style: { auto: 'AI style', photo: 'Photo', illustration: 'Illustration', '3d': '3D', collage: 'Collage' },
+  format: { square: '1:1', portrait: '4:5', story: '9:16' }, phone: { none: '', ai: 'phone (AI screen)', blank: 'phone (blank screen)' } };
+function setAdPicture(pic, channelName) {
+  pic = pic || {};
+  $('ad-style').value = pic.style || 'auto';
+  $('ad-format').value = pic.format || 'square';
+  $('ad-phone').value = pic.phone || 'none';
+  $('ad-title-on').checked = !!pic.title;
+  $('ad-title').disabled = !pic.title;
+  $('ad-title').value = pic.title || channelName || '';
+  adPhoneHint();
+}
+function adPicture() {
+  return { style: $('ad-style').value, format: $('ad-format').value, phone: $('ad-phone').value,
+           title: $('ad-title-on').checked ? $('ad-title').value.trim() : '' };
+}
+function adPhoneHint() {
+  $('ad-phone-hint').textContent = { none: '',
+    ai: 'The screen is invented by the AI: it looks like a post, but not exactly like your channel.',
+    blank: 'Then put a real screenshot of your channel on the screen (e.g. in Canva). Looks real, takes a minute.' }[$('ad-phone').value];
+}
+function pictureSummary(pic) {
+  if (!pic) return '';
+  return [PICTURE_LABEL.style[pic.style], PICTURE_LABEL.format[pic.format], PICTURE_LABEL.phone[pic.phone],
+          pic.title ? `title “${esc(pic.title)}”` : ''].filter(Boolean).join(' · ');
 }
 
 function adCard(p) {
@@ -865,7 +912,11 @@ function adCard(p) {
       <div class="col-md-5">
         <label class="form-label small-muted d-flex align-items-center">Photo prompt for ChatGPT, Gemini, Midjourney…
           <button class="btn btn-sm btn-light-b ms-auto py-0 text-nowrap" onclick="copyAdPrompt(${p.id})"><i class="bi bi-clipboard me-1"></i>Copy</button></label>
-        <textarea class="form-control small mb-2" rows="5" id="ad-prompt-${p.id}" ${posted ? 'readonly' : ''} onchange="saveAd(${p.id})">${esc(p.image_prompt)}</textarea>
+        <textarea class="form-control small mb-1" rows="5" id="ad-prompt-${p.id}" ${posted ? 'readonly' : ''} onchange="saveAd(${p.id})">${esc(p.image_prompt)}</textarea>
+        <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+          <span class="small-muted">${pictureSummary(p.picture)}</span>
+          ${posted ? '' : `<button class="btn btn-sm btn-light-b ms-auto py-0 text-nowrap" id="ad-reprompt-${p.id}" onclick="newAdPrompt(${p.id})" title="Write a new photo prompt with the Picture settings of the form; the ad text stays"><i class="bi bi-arrow-repeat me-1"></i>New prompt</button>`}
+        </div>
         ${img}${imgControls}
       </div>
     </div>
@@ -882,11 +933,19 @@ async function generateAd() {
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Writing…';
   try {
     const res = await api(`/panel/api/bots/${state.botId}/promos`, jsonOpts('POST',
-      { target_bot_id: +$('ad-target').value, tone: $('ad-tone').value, hints: $('ad-hints').value }));
+      { target_bot_id: +$('ad-target').value, tone: $('ad-tone').value, hints: $('ad-hints').value, picture: adPicture() }));
     if (res.error) toast(res.error, 'error'); else toast('Ad written. Check it, add a photo, then post.');
   } finally {
     btn.disabled = false; btn.innerHTML = '<i class="bi bi-stars me-1"></i>Generate ad';
   }
+  loadAds();
+}
+
+async function newAdPrompt(id) {
+  const btn = $(`ad-reprompt-${id}`);
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Writing…';
+  const res = await api(`/panel/api/promos/${id}/image-prompt`, jsonOpts('POST', { picture: adPicture() }));
+  if (res.error) toast(res.error, 'error'); else toast('New photo prompt written');
   loadAds();
 }
 

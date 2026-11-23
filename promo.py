@@ -8,6 +8,7 @@ picture itself is made by hand in another tool and uploaded in the panel.
 import html
 import json
 import logging
+import random
 import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -23,37 +24,140 @@ TONES = {
 }
 TEXT_MAX = 700        # the caption limit is 1024; the link and channel name are added after
 JOIN = {"fa": "عضو شوید", "de": "Jetzt beitreten", "en": "Join"}
-IMAGE_RULES = (
-    "a ready-to-paste prompt in English for an AI image generator (ChatGPT, Gemini, Midjourney), "
-    "one paragraph of 80-140 words, for a square picture people stop scrolling for.\n"
-    "  First think of ONE fresh visual idea that fits only this channel: a real moment with a feeling "
-    "(someone understanding a German sentence for the first time, a city scene at a special hour) or a "
-    "simple visual metaphor. Then describe that scene like a film director: who exactly (age, clothes, "
-    "expression, gesture), where exactly (a specific kind of place, weather, time of day), what is "
-    "happening right now.\n"
-    "  Start with the style and medium (e.g. risograph print, gouache illustration, cinematic 35mm "
-    "photo, paper-cut collage, soft clay 3D) and then give the camera angle, where the subject sits in the "
-    "square, an empty calm upper third, the light, and a palette of 3-4 named colours.\n"
-    "  Avoid clichés: no globes, flags, stacks of books, light bulbs, speech bubbles, phones or laptops "
-    "showing icons, newspapers with headlines, coffee mugs, laptops, generic 'smiling young adult'. "
-    "Never name brands, news outlets, the channel, apps or logos, and nothing with readable writing.\n"
-    "  The quality to aim for (do not copy these):\n"
+# Picture settings the owner picks in the panel; they shape the image prompt.
+PICTURE_DEFAULT = {"style": "auto", "format": "square", "title": "", "phone": "none"}
+STYLES = {
+    "auto": "Choose the style and medium that fits the tone (e.g. risograph print, gouache illustration, "
+            "cinematic 35mm photo, paper-cut collage, soft clay 3D) and name it first",
+    "photo": "A cinematic photograph: name it first, with lens, depth of field and film look",
+    "illustration": "A hand-made looking illustration (e.g. gouache, risograph print, ink and watercolour, "
+                    "editorial vector): name the exact medium first",
+    "3d": "A soft 3D render (clay or toy-like materials, gentle studio light): name it first",
+    "collage": "A paper-cut or mixed-media collage with visible paper textures: name it first",
+}
+FORMATS = {
+    "square": ("1:1 square", "an empty calm area in the upper third"),
+    "portrait": ("4:5 portrait", "an empty calm area in the upper quarter"),
+    "story": ("9:16 vertical (for stories)",
+              "the top fifth and bottom fifth calm and empty, because app buttons cover them"),
+}
+PHONES = ("none", "ai", "blank")
+# Varied starting points, so not every picture is the same rainy window.
+SETTINGS = ["a bakery queue in the morning", "a regional train crossing a river bridge", "a laundromat at night",
+            "a park bench under autumn trees", "a small kitchen while cooking dinner", "a bike ride along a canal",
+            "a weekly market stall", "a library staircase", "a balcony full of plants", "a tram stop in snow",
+            "a night bus with fogged windows", "a lake shore in summer", "a student dorm room at midnight",
+            "a hiking trail with a view over a valley", "a busy station hall at rush hour", "a rooftop at sunset",
+            "a cosy café corner on a rainy afternoon", "a street festival with string lights"]
+EXAMPLES = (
     "  * Risograph print in two inks, deep teal and tomato red on warm off-white paper with visible grain. "
-    "A woman in her thirties in a yellow raincoat waits on a rainy Berlin S-Bahn platform at dawn, eyes "
-    "closed, one earbud in, a small smile as if she just understood something. The rain around her head "
-    "turns into tiny paper birds flying upward. Low angle, woman in the lower left, the birds leading the "
-    "eye up into a calm, empty pale sky. Quiet, hopeful mood. No text, letters, numbers, logos or "
-    "watermarks anywhere in the image.\n"
-    "  * Cinematic photograph, 35mm, shallow depth of field, golden hour. From a wooden punt on a calm "
-    "river, an old man in a flat cap and a teenage girl lean over the side laughing; behind them pastel "
-    "half-timbered houses mirror in the water and willow branches hang in from above. Subjects in the "
-    "lower half, wide calm sky above. Palette: honey gold, sage green, faded rose, river blue. No text, "
-    "letters, numbers, logos or watermarks anywhere in the image."
+    "A woman in her thirties in a yellow raincoat waits on a rainy city platform at dawn, eyes closed, one "
+    "earbud in, lips slightly moving as she repeats a word. The rain around her head turns into tiny paper "
+    "birds flying upward. Camera low on the platform, woman in the lower left, the birds leading the eye up "
+    "into a calm, empty pale sky.\n"
+    "  * Cinematic photograph, 35mm, shallow depth of field, golden hour. From a wooden punt on a calm river, "
+    "an old man in a flat cap and a teenage girl lean over the side laughing at a folded city map; behind "
+    "them pastel half-timbered houses mirror in the water and willow branches hang in from above. Camera at "
+    "water level in the boat, subjects in the lower half, wide calm sky above. Palette: honey gold, sage "
+    "green, faded rose, river blue."
 )
+# Words from the examples: three or more means the AI copied instead of inventing.
+EXAMPLE_MARKERS = ("rain", "dawn", "earbud", "raincoat", "platform", "paper birds", "punt", "willow",
+                   "flat cap", "half-timbered", "window")
 # Stock props that make every ad picture look the same.
 CLICHES = re.compile(r"\b(globe|flags?|stacks? of books|language books|light ?bulb|speech bubbles?|"
                      r"smartphone|laptop|tablet|headlines?|coffee mug|mug|audio icons?|icons?)\b", re.I)
+PHONE_WORDS = {"smartphone", "icon", "icons"}
+# A picture can't show nationality, and naming it invites stereotypes.
+ORIGIN = re.compile(r"\b(persian|iranian|afghan|tajik|middle[- ]eastern|arab(?:ic)?|ethnic|"
+                    r"german (?:man|woman|girl|boy|person|student)s?)\b", re.I)
+# A closing "no text ..." sentence written by the AI; replaced by ours.
+NO_TEXT_SENTENCE = re.compile(r"(?:^|(?<=[.!]))\s*(?:(?:no|without)\b[^.]*\b(?:text|letters|logos?|watermarks?)\b"
+                              r"|the only (?:readable )?text\b)[^.]*(?:\.|$)", re.I)
 NO_TEXT = "No text, letters, numbers, logos or watermarks anywhere in the image."
+
+
+def picture_options(raw: Any) -> Dict[str, str]:
+    """Clean picture settings from the panel (unknown values fall back to the defaults)."""
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "style": raw.get("style") if raw.get("style") in STYLES else "auto",
+        "format": raw.get("format") if raw.get("format") in FORMATS else "square",
+        "title": re.sub(r"\s+", " ", str(raw.get("title") or "")).strip()[:40],
+        "phone": raw.get("phone") if raw.get("phone") in PHONES else "none",
+    }
+
+
+def _shown_name(picture: Dict[str, str], target: Dict[str, Any]) -> str:
+    """The only words allowed in the picture: the title, or the channel name on a drawn phone screen."""
+    if picture["title"]:
+        return picture["title"]
+    return (target.get("name") or "") if picture["phone"] == "ai" else ""
+
+
+def image_ending(picture: Dict[str, str], target: Dict[str, Any]) -> str:
+    name = _shown_name(picture, target)
+    if name:
+        return (f'The only readable text in the image is "{name}"; no other text, letters, numbers, logos '
+                "or watermarks.")
+    return NO_TEXT
+
+
+def image_rules(picture: Dict[str, str], target: Dict[str, Any], seed: Optional[random.Random] = None) -> str:
+    fmt, space = FORMATS[picture["format"]]
+    settings = (seed or random).sample(SETTINGS, 3)
+    if target.get("city_only") and target.get("city_name"):
+        settings.insert(0, f"a recognisable everyday spot in {target['city_name']}")
+    parts = [
+        "a ready-to-paste prompt in English for an AI image generator (ChatGPT, Gemini, Midjourney), one "
+        f"paragraph of 90-150 words, for a {fmt} picture people stop scrolling for.",
+        "Idea: ONE fresh visual idea that fits only this channel: a real moment with a feeling, or a simple "
+        "visual metaphor. Include one visible detail that shows the channel's idea without readable words "
+        "(e.g. lips moving as someone repeats a word aloud, a hand-written vocabulary card, a local landmark). "
+        f"Settings to consider for variety, or a better one: {'; '.join(settings)}.",
+        "Describe it like a film director: who (age, clothes, expression, gesture; not nationality, ethnicity "
+        "or language, which a picture can't show), where (a specific place, weather, time of day), what is "
+        "happening right now.",
+        f"Style: {STYLES[picture['style']]}.",
+        "Camera: where the camera is (inside or outside, height, distance, angle), where the subject sits in "
+        f"the frame, and {space}. Then the light and a palette of 3-4 named colours.",
+    ]
+    name = target.get("name") or ""
+    if picture["phone"] == "ai":
+        parts.append(
+            "Include a hand holding a modern phone, screen facing the viewer, sharp and large in the frame. The "
+            "screen shows a channel post in a generic messenger app: at the top the channel name "
+            f'"{picture["title"] or name}", below it a news photo, an audio player bar with a waveform, and a '
+            "few lines of small blurred text. No app logos or app names.")
+    elif picture["phone"] == "blank":
+        parts.append(
+            "Include a hand holding a modern phone, screen facing the viewer almost straight on, large in the "
+            "frame. The screen is completely blank: plain bright white, evenly lit, no reflections, so a real "
+            "screenshot can be placed on it later.")
+    if picture["title"]:
+        parts.append(
+            f'Put a title in the empty area: exactly the words "{picture["title"]}", spelled exactly like that, '
+            "in bold, clean, rounded sans-serif letters, large and easy to read.")
+    avoid = ("Avoid clichés: no globes, flags, stacks of books, light bulbs, speech bubbles, newspapers with "
+             "headlines, coffee mugs, laptops, generic 'smiling young adult'")
+    if picture["phone"] == "none":
+        avoid += ", no phones or tablets showing icons"
+    parts.append(avoid + ". Never name brands, news outlets, apps or logos"
+                 + (", and no readable writing except what is asked above." if _shown_name(picture, target)
+                    else ", the channel, and nothing with readable writing."))
+    parts.append(f"End with exactly: '{image_ending(picture, target)}'")
+    parts.append("The quality to aim for. Do NOT reuse their settings, weather, people or poses:\n" + EXAMPLES)
+    return "\n  ".join(parts)
+
+
+def finish_image_prompt(prompt: str, picture: Dict[str, str], target: Dict[str, Any]) -> str:
+    """Replace whatever "no text" sentence the AI wrote with exactly one of ours."""
+    body = NO_TEXT_SENTENCE.sub("", prompt).strip()
+    if body and body[-1] not in ".!":
+        body += "."
+    return f"{body} {image_ending(picture, target)}"
+
+
 # A welcome greeting (fa / de / en); only allowed when the owner asks for one in the hints.
 WELCOME = re.compile(r"خوش\s*آمد|willkommen|welcome|سلام|hallo")
 
@@ -119,9 +223,10 @@ class PromoWriter:
     def enabled(self) -> bool:
         return self.client.enabled
 
-    def write(self, host: Dict[str, Any], target: Dict[str, Any], hints: str = "",
-              tone: str = "friendly") -> Optional[Dict[str, str]]:
+    def write(self, host: Dict[str, Any], target: Dict[str, Any], hints: str = "", tone: str = "friendly",
+              picture: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]:
         """{"text", "image_prompt"}, or None if no AI provider gave a usable answer."""
+        picture = picture_options(picture)
         language = host.get("target_language") or "fa"
         language_name = LANGUAGE_NAMES.get(language, language)
         same = host["id"] == target["id"]
@@ -141,46 +246,96 @@ class PromoWriter:
             "- Do not put any link or @name in the text; the join link is added below it.\n"
             "- Channel names and German words may stay in Latin letters.\n"
             f"- Tone: {TONES.get(tone, TONES['friendly'])}.\n"
-            f"- image_prompt: {IMAGE_RULES}\n"
+            f"- image_prompt: {image_rules(picture, target)}\n"
             'Reply with JSON only: {"text": "...", "image_prompt": "..."}'
         )
         user = f"Channel facts:\n{channel_facts(target)}"
         if hints.strip():
             user += f"\n\nWhat the owner wants the ad to say or feel like:\n{hints.strip()[:800]}"
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+        def check(out):
+            ad = {"text": str(out.get("text") or "").strip(),
+                  "image_prompt": str(out.get("image_prompt") or "").strip()}
+            problem = (self._problem(ad, language, language_name, hints)
+                       or self._image_problem(ad["image_prompt"], target, picture))
+            if problem:
+                return None, problem
+            ad["image_prompt"] = finish_image_prompt(ad["image_prompt"], picture, target)
+            return ad, None
+        return self._ask(host, [{"role": "system", "content": system}, {"role": "user", "content": user}], check)
+
+    def image_prompt(self, host: Dict[str, Any], target: Dict[str, Any], text: str, hints: str = "",
+                     picture: Optional[Dict[str, str]] = None) -> Optional[str]:
+        """Only a new image prompt for an existing ad, e.g. after changing the picture settings."""
+        picture = picture_options(picture)
+        system = ("You write prompts for AI image generators, for pictures that go with Telegram ads.\n"
+                  f"Write image_prompt: {image_rules(picture, target)}\n"
+                  'Reply with JSON only: {"image_prompt": "..."}')
+        user = f"Channel facts:\n{channel_facts(target)}\n\nThe ad the picture goes with:\n{text.strip()}"
+        if hints.strip():
+            user += f"\n\nWhat the owner wants:\n{hints.strip()[:800]}"
+
+        def check(out):
+            prompt = str(out.get("image_prompt") or "").strip()
+            problem = ("The image_prompt is missing." if not prompt else
+                       "The image_prompt must be in English." if PERSIAN_CHARS.search(prompt) else
+                       self._image_problem(prompt, target, picture))
+            return (None, problem) if problem else (finish_image_prompt(prompt, picture, target), None)
+        return self._ask(host, [{"role": "system", "content": system}, {"role": "user", "content": user}], check)
+
+    def _ask(self, host: Dict[str, Any], messages: List[Dict[str, str]], check):
+        """Up to 3 tries; each problem goes back to the AI as feedback."""
         for _ in range(3):
             try:
                 with tagged(bot_id=host["id"], purpose="promo"):
-                    out = self.client.complete_json(messages, temperature=0.8, max_tokens=900)
+                    out = self.client.complete_json(messages, temperature=0.8, max_tokens=1000)
             except LlmUnavailable as exc:
                 logger.warning("promo writer unavailable: %s", exc)
                 return None
-            ad = {"text": str(out.get("text") or "").strip(), "image_prompt": str(out.get("image_prompt") or "").strip()}
-            problem = (self._problem(ad, language, language_name, hints)
-                       or self._image_problem(ad["image_prompt"], target))
+            result, problem = check(out)
             if not problem:
-                if "no text" not in ad["image_prompt"].lower():
-                    ad["image_prompt"] = f"{ad['image_prompt'].rstrip()} {NO_TEXT}"
-                return ad
+                return result
             messages += [{"role": "assistant", "content": json.dumps(out, ensure_ascii=False)},
                          {"role": "user", "content": f"{problem} Reply with the corrected JSON."}]
         return None
 
     @staticmethod
-    def _image_problem(prompt: str, target: Dict[str, Any]) -> Optional[str]:
-        if len(prompt.split()) < 60:
-            return ("The image_prompt is too thin. Write 80-140 words: style and medium, one concrete "
-                    "subject, setting with props, composition, light, a named colour palette.")
-        # Brands come out as garbled logos: the outlets, the channel and Telegram must not be named.
-        cliches = sorted({m.lower() for m in CLICHES.findall(prompt.split("No text")[0])})
+    def _image_problem(prompt: str, target: Dict[str, Any], picture: Optional[Dict[str, str]] = None
+                       ) -> Optional[str]:
+        picture = picture or dict(PICTURE_DEFAULT)
+        body = NO_TEXT_SENTENCE.sub("", prompt)
+        lower = body.lower()
+        if len(body.split()) < 60:
+            return ("The image_prompt is too thin. Write 90-150 words: style and medium, one concrete "
+                    "subject, setting, camera position, composition, light, a named colour palette.")
+        cliches = sorted({m.lower() for m in CLICHES.findall(body)}
+                         - (PHONE_WORDS if picture["phone"] != "none" else set()))
         if cliches:
             return (f"The image_prompt uses stock props ({', '.join(cliches)}). Find one fresh visual idea, "
                     "a real moment or a metaphor, and rewrite it without them.")
-        names = [target.get("name") or "", "Telegram"]
+        origin = sorted({m.lower() for m in ORIGIN.findall(body)})
+        if origin:
+            return (f"The image_prompt says {', '.join(origin)}. A picture can't show nationality or "
+                    "language; describe only what is visible (age, clothes, expression, gesture).")
+        copied = [m for m in EXAMPLE_MARKERS if re.search(rf"\b{re.escape(m)}", lower)]
+        if len(copied) >= 3:
+            return (f"The image_prompt copies the example ({', '.join(copied)}). Invent a different setting, "
+                    "time of day, person and pose.")
+        shown = _shown_name(picture, target)
+        if shown and not re.search(rf'["“„]{re.escape(shown)}["”“]', body):
+            return f'The image_prompt must contain the exact words "{shown}" in double quotes.'
+        if picture["phone"] == "blank" and not re.search(r"\b(blank|plain|empty)\b[^.]{0,60}\bscreen|"
+                                                        r"\bscreen\b[^.]{0,60}\b(blank|plain|empty)\b", lower):
+            return "The phone screen must be completely blank (plain bright white), so a screenshot fits on it."
+        if picture["phone"] != "none" and not re.search(r"\b(?:smart)?phone\b", lower):
+            return "The image_prompt must include the hand holding a phone."
+        # Brands come out as garbled logos: outlets, Telegram and (unless it's the title) the channel.
+        names = ["Telegram"] + ([] if shown == target.get("name") else [target.get("name") or ""])
         for source in _feed_names(target):  # "tagesschau.de" -> also "tagesschau"; "DW Deutsch" -> also "DW"
             names += [source, source.split(".")[0], source.split()[0]]
+        unquoted = re.sub(rf'["“„]{re.escape(shown)}["”“]', "", body) if shown else body
         named = list(dict.fromkeys(n for n in names if len(n) >= 2
-                                   and re.search(rf"\b{re.escape(n)}\b", prompt, re.I)))
+                                   and re.search(rf"\b{re.escape(n)}\b", unquoted, re.I)))
         if named:
             return (f"The image_prompt names {', '.join(named)}. No brands, outlets, channel names or "
                     "logos; show the idea with objects and scenes instead.")

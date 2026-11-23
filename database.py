@@ -39,6 +39,7 @@ def _migrate(c):
         "ALTER TABLE posts ADD COLUMN message_id INTEGER",
         "ALTER TABLE posts ADD COLUMN lesson_id INTEGER",
         "ALTER TABLE bots ADD COLUMN city_only INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE promos ADD COLUMN picture TEXT",
     ]
     for sql in migrations:
         try:
@@ -767,16 +768,17 @@ def get_run(run_id: int) -> Optional[Dict[str, Any]]:
 
 # --- Promos (ads for our channels) ---
 
-PROMO_FIELDS = ("id", "bot_id", "target_bot_id", "hints", "tone", "text", "image_prompt", "link",
+PROMO_FIELDS = ("id", "bot_id", "target_bot_id", "hints", "tone", "picture", "text", "image_prompt", "link",
                 "created_at", "posted_at", "message_id", "pinned", "members_before", "error")
 
 
 def add_promo(bot_id: int, target_bot_id: int, hints: str, tone: str, text: str, image_prompt: str,
-              link: Optional[str]) -> int:
+              link: Optional[str], picture: Optional[str] = None) -> int:
+    """`picture` is the picture settings as JSON text."""
     with _conn() as c:
-        return c.execute("""INSERT INTO promos (bot_id, target_bot_id, hints, tone, text, image_prompt, link)
-                            VALUES (?,?,?,?,?,?,?)""",
-                         (bot_id, target_bot_id, hints, tone, text, image_prompt, link)).lastrowid
+        return c.execute("""INSERT INTO promos (bot_id, target_bot_id, hints, tone, text, image_prompt, link,
+                                                picture) VALUES (?,?,?,?,?,?,?,?)""",
+                         (bot_id, target_bot_id, hints, tone, text, image_prompt, link, picture)).lastrowid
 
 
 def get_promo(promo_id: int, with_image: bool = False) -> Optional[Dict[str, Any]]:
@@ -803,7 +805,7 @@ def get_promos(bot_id: int, limit: int = 30) -> List[Dict[str, Any]]:
 
 
 def update_promo(promo_id: int, fields: Dict[str, Any]) -> None:
-    allowed = {"text", "image_prompt", "image", "link", "posted_at", "message_id", "pinned",
+    allowed = {"text", "image_prompt", "picture", "image", "link", "posted_at", "message_id", "pinned",
                "members_before", "error"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -821,6 +823,6 @@ def delete_promo(promo_id: int) -> None:
 def last_promo_hints(target_bot_id: int) -> Dict[str, Any]:
     """The hints and tone used last time for this channel, to prefill the form."""
     with _conn() as c:
-        row = c.execute("SELECT hints, tone FROM promos WHERE target_bot_id = ? ORDER BY id DESC LIMIT 1",
+        row = c.execute("SELECT hints, tone, picture FROM promos WHERE target_bot_id = ? ORDER BY id DESC LIMIT 1",
                         (target_bot_id,)).fetchone()
         return dict(row) if row else {}

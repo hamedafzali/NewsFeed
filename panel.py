@@ -1,6 +1,7 @@
 """
 Panel Blueprint — management dashboard API + UI.
 """
+import json
 import os
 import threading
 import time
@@ -308,15 +309,27 @@ def run_detail(run_id):
 MAX_AD_IMAGE = 8 * 1024 * 1024  # Telegram takes photos up to 10 MB
 
 
+def _picture(raw):
+    try:
+        return promo.picture_options(json.loads(raw) if isinstance(raw, str) else raw)
+    except ValueError:
+        return dict(promo.PICTURE_DEFAULT)
+
+
 def _promo_out(p):
-    return {k: v for k, v in p.items() if k != "image"}
+    out = {k: v for k, v in p.items() if k != "image"}
+    out["picture"] = _picture(p.get("picture"))
+    return out
 
 
 @panel.route("/api/bots/<int:bot_id>/promos")
 def list_promos(bot_id):
     if not db.get_bot(bot_id):
         return jsonify({"error": "Not found"}), 404
-    return jsonify({"promos": db.get_promos(bot_id), "last": db.last_promo_hints(bot_id),
+    last = db.last_promo_hints(bot_id)
+    if last:
+        last["picture"] = _picture(last.get("picture"))
+    return jsonify({"promos": [_promo_out(p) for p in db.get_promos(bot_id)], "last": last,
                     "tones": list(promo.TONES)})
 
 
@@ -333,12 +346,33 @@ def create_promo(bot_id):
         return jsonify({"error": "No AI provider is configured"}), 400
     tone = data.get("tone") if data.get("tone") in promo.TONES else "friendly"
     hints = str(data.get("hints") or "")[:800]
-    ad = writer.write(host, target, hints, tone)
+    picture = promo.picture_options(data.get("picture"))
+    ad = writer.write(host, target, hints, tone, picture)
     if not ad:
         return jsonify({"error": "The AI did not give a usable ad. Try again."}), 502
     promo_id = db.add_promo(bot_id, target["id"], hints, tone, ad["text"], ad["image_prompt"],
-                            promo.target_link(target))
+                            promo.target_link(target), json.dumps(picture))
     return jsonify(_promo_out(db.get_promo(promo_id))), 201
+
+
+@panel.route("/api/promos/<int:promo_id>/image-prompt", methods=["POST"])
+def new_image_prompt(promo_id):
+    """A new image prompt for an ad, with (possibly changed) picture settings; the text stays."""
+    p = db.get_promo(promo_id)
+    if not p:
+        return jsonify({"error": "Not found"}), 404
+    host, target = db.get_bot(p["bot_id"]), db.get_bot(p["target_bot_id"])
+    if not host or not target:
+        return jsonify({"error": "The channel no longer exists"}), 404
+    writer = promo.PromoWriter()
+    if not writer.enabled:
+        return jsonify({"error": "No AI provider is configured"}), 400
+    picture = promo.picture_options((request.get_json(silent=True) or {}).get("picture"))
+    prompt = writer.image_prompt(host, target, p["text"], p.get("hints") or "", picture)
+    if not prompt:
+        return jsonify({"error": "The AI did not give a usable prompt. Try again."}), 502
+    db.update_promo(promo_id, {"image_prompt": prompt, "picture": json.dumps(picture)})
+    return jsonify(_promo_out(db.get_promo(promo_id)))
 
 
 @panel.route("/api/promos/<int:promo_id>", methods=["PUT"])
