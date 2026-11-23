@@ -23,6 +23,26 @@ TONES = {
 }
 TEXT_MAX = 700        # the caption limit is 1024; the link and channel name are added after
 JOIN = {"fa": "عضو شوید", "de": "Jetzt beitreten", "en": "Join"}
+IMAGE_RULES = (
+    "a ready-to-paste prompt in English for an AI image generator (ChatGPT, Gemini, Midjourney), "
+    "one paragraph of 80-140 words, for a striking square picture that makes people stop scrolling. "
+    "Write it in this order: "
+    "(1) the style and medium first, chosen to fit the tone (e.g. 'Editorial flat vector illustration', "
+    "'Cinematic photograph, 35mm lens, shallow depth of field', 'Soft 3D render, clay style'); "
+    "(2) ONE clear main subject described by what is visible: age, clothes, expression, action. "
+    "Not nationality or language, which a picture can't show; "
+    "(3) the setting with 2-3 concrete props that tell the channel's idea without words "
+    "(e.g. for learning German: earbuds, a notebook with sticky notes, a Berlin U-Bahn window; for local "
+    "news: a recognisable street scene of the city); prefer one fresh visual idea or metaphor over a stock "
+    "scene like 'person smiling at a laptop'; "
+    "(4) composition: 1:1 square, camera angle and distance, where the subject sits, an empty calm area "
+    "in the upper third; "
+    "(5) lighting and mood; "
+    "(6) a colour palette of 3-4 named colours. "
+    "Never name brands, news outlets, the channel, apps or logos, and no screens or pages with readable "
+    "writing. End with: 'No text, letters, numbers, logos or watermarks anywhere in the image.'"
+)
+NO_TEXT = "No text, letters, numbers, logos or watermarks anywhere in the image."
 # A welcome greeting (fa / de / en); only allowed when the owner asks for one in the hints.
 WELCOME = re.compile(r"خوش\s*آمد|willkommen|welcome|سلام|hallo")
 
@@ -110,10 +130,7 @@ class PromoWriter:
             "- Do not put any link or @name in the text; the join link is added below it.\n"
             "- Channel names and German words may stay in Latin letters.\n"
             f"- Tone: {TONES.get(tone, TONES['friendly'])}.\n"
-            "- image_prompt: in English, a prompt for an AI image generator (e.g. ChatGPT, Gemini, "
-            "Midjourney) for a square picture that fits the ad: subject, setting, style, colours, "
-            "light. No text, letters or logos in the image (generators garble them). "
-            "Leave calm space at the top. 40-80 words.\n"
+            f"- image_prompt: {IMAGE_RULES}\n"
             'Reply with JSON only: {"text": "...", "image_prompt": "..."}'
         )
         user = f"Channel facts:\n{channel_facts(target)}"
@@ -128,11 +145,30 @@ class PromoWriter:
                 logger.warning("promo writer unavailable: %s", exc)
                 return None
             ad = {"text": str(out.get("text") or "").strip(), "image_prompt": str(out.get("image_prompt") or "").strip()}
-            problem = self._problem(ad, language, language_name, hints)
+            problem = (self._problem(ad, language, language_name, hints)
+                       or self._image_problem(ad["image_prompt"], target))
             if not problem:
+                if "no text" not in ad["image_prompt"].lower():
+                    ad["image_prompt"] = f"{ad['image_prompt'].rstrip()} {NO_TEXT}"
                 return ad
             messages += [{"role": "assistant", "content": json.dumps(out, ensure_ascii=False)},
                          {"role": "user", "content": f"{problem} Reply with the corrected JSON."}]
+        return None
+
+    @staticmethod
+    def _image_problem(prompt: str, target: Dict[str, Any]) -> Optional[str]:
+        if len(prompt.split()) < 60:
+            return ("The image_prompt is too thin. Write 80-140 words: style and medium, one concrete "
+                    "subject, setting with props, composition, light, a named colour palette.")
+        # Brands come out as garbled logos: the outlets, the channel and Telegram must not be named.
+        names = [target.get("name") or "", "Telegram"]
+        for source in _feed_names(target):  # "tagesschau.de" -> also "tagesschau"; "DW Deutsch" -> also "DW"
+            names += [source, source.split(".")[0], source.split()[0]]
+        named = list(dict.fromkeys(n for n in names if len(n) >= 2
+                                   and re.search(rf"\b{re.escape(n)}\b", prompt, re.I)))
+        if named:
+            return (f"The image_prompt names {', '.join(named)}. No brands, outlets, channel names or "
+                    "logos; show the idea with objects and scenes instead.")
         return None
 
     @staticmethod

@@ -35,8 +35,14 @@ class _Chain:
         return self.answers.pop(0)
 
 
+IMAGE = ("Editorial flat vector illustration. A young woman in a mustard coat sits by the window of a Berlin "
+         "U-Bahn carriage, eyes closed, smiling, white earbuds in, a small notebook with colourful sticky notes "
+         "open on her knee. Through the window the city slides past in soft motion blur: a tram, a bakery, "
+         "autumn trees. Square 1:1, eye-level medium shot, subject in the lower right, calm empty sky in the "
+         "upper third. Warm morning light, hopeful and calm mood. Palette: deep teal, mustard yellow, "
+         "cream and coral. No text, letters, numbers, logos or watermarks anywhere in the image.")
 GOOD = {"text": "یادگیری آلمانی با خبرهای واقعی هر روز 📰\nهر خبر با فایل صوتی و توضیح لغات به فارسی. همین حالا عضو شوید!",
-        "image_prompt": "Flat illustration of a student with headphones reading a newspaper in a cafe, warm colours, no text."}
+        "image_prompt": IMAGE}
 
 
 class _Publisher:
@@ -91,6 +97,17 @@ def test_an_ad_does_not_start_with_welcome_unless_asked():
     assert "not a welcome message" in chain.seen[0][0]["content"]
     asked = _Chain([welcome])
     assert promo.PromoWriter(asked).write(host, host, hints="start with خوش آمدید") == welcome
+
+
+def test_thin_or_branded_image_prompts_are_sent_back():
+    host = db.get_bot(_bot(custom_feeds="https://www.tagesschau.de/x.xml"))
+    thin = dict(GOOD, image_prompt="A person with headphones reading German news, warm colours.")
+    branded = dict(GOOD, image_prompt=IMAGE.replace("a tram", "a Tagesschau logo on a screen"))
+    no_ending = dict(GOOD, image_prompt=IMAGE.replace(" " + promo.NO_TEXT, ""))
+    chain = _Chain([thin, branded, no_ending])
+    ad = promo.PromoWriter(chain).write(host, host)
+    assert "too thin" in chain.seen[1][-1]["content"] and "tagesschau" in chain.seen[2][-1]["content"]
+    assert ad["image_prompt"].endswith(promo.NO_TEXT)  # always added when the AI left it out
 
 
 def test_cross_promotion_speaks_to_the_other_channels_readers():
